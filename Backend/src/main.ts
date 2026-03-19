@@ -1,14 +1,13 @@
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
-import { RedisIoAdapter } from './websocket/redis-io.adapter';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
-import { ThrottleGuard } from './throttle/throttle.guard';
+import { ConfigService } from '@nestjs/config';
+import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const configService = app.get(ConfigService);
 
-  // Enable validation globally
+  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -17,26 +16,17 @@ async function bootstrap() {
     }),
   );
 
-  // Configure Swagger
-  const config = new DocumentBuilder()
-    .setTitle('Stellara API')
-    .setDescription(
-      'API for authentication, monitoring Stellar network events, and delivering webhooks',
-    )
-    .setVersion('1.0')
-    .addTag('Authentication')
-    .addTag('Stellar Monitor')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // API prefix
+  const apiPrefix = configService.get<string>('API_PREFIX', 'api/v1');
+  app.setGlobalPrefix(apiPrefix);
 
-  const redisIoAdapter = new RedisIoAdapter(app);
-  await redisIoAdapter.connectToRedis();
+  // CORS
+  app.enableCors();
 
-  app.useWebSocketAdapter(redisIoAdapter);
-  app.useGlobalGuards(app.get(ThrottleGuard));
+  const port = configService.get<number>('PORT', 3000);
+  await app.listen(port);
 
-  await app.listen(process.env.PORT ?? 3000);
+  console.log(`Application is running on: http://localhost:${port}/${apiPrefix}`);
 }
+
 bootstrap();
