@@ -15,6 +15,7 @@ model User {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   // Notification fields
+  phoneNumber      String? @unique @map("phone_number")
   email            String? @unique @map("email_encrypted")
   pushSubscription Json?   @map("push_subscription")
 
@@ -174,6 +175,8 @@ model NotificationSetting {
   user                User     @relation(fields: [userId], references: [id])
   emailEnabled        Boolean  @default(true) @map("email_enabled")
   pushEnabled         Boolean  @default(false) @map("push_enabled")
+  smsEnabled          Boolean  @default(false) @map("sms_enabled")
+  websocketEnabled    Boolean  @default(true) @map("websocket_enabled")
   notifyContributions Boolean  @default(true) @map("notify_contributions")
   notifyMilestones    Boolean  @default(true) @map("notify_milestones")
   notifyDeadlines     Boolean  @default(true) @map("notify_deadlines")
@@ -192,10 +195,40 @@ model Notification {
   message   String
   read      Boolean          @default(false)
   data      Json? // Optional metadata (e.g., projectId)
-  createdAt DateTime         @default(now()) @map("created_at")
+  createdAt DateTime               @default(now()) @map("created_at")
+  deliveries NotificationDelivery[]
 
   @@index([userId])
   @@map("notifications")
+}
+
+model NotificationDelivery {
+  id             String              @id @default(cuid())
+  notificationId String              @map("notification_id")
+  notification   Notification        @relation(fields: [notificationId], references: [id])
+  channel        NotificationChannel
+  status         DeliveryStatus      @default(PENDING)
+  errorMessage   String?             @map("error_message")
+  attempts       Int                 @default(0)
+  lastAttemptAt  DateTime?           @map("last_attempt_at")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  @@map("notification_deliveries")
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  WEBSOCKET
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  RETRYING
 }
 
 model EmailOutbox {
