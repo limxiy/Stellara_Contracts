@@ -307,3 +307,236 @@ fn test_duplicate_approval_prevention() {
     let result = client.try_approve_upgrade(&proposal_id, &approver);
     assert!(result.is_err());
 }
+
+// ============ OPTIMIZED TRADING TESTS ============
+
+#[test]
+fn test_optimized_trade_execution() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    env.mock_all_auths();
+
+    let (client, _admin, _approver, _executor) = setup_contract(&env);
+
+    let trader = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+
+    // Register a mock token contract
+    let token_id = env.register_stellar_asset_contract(fee_recipient.clone());
+
+    // Execute a buy trade
+    let trade_id = client.trade(
+        &trader,
+        &symbol_short!("BTCUSD"),
+        &1_000_000i128,
+        &50_000i128,
+        &true,
+        &token_id,
+        &0i128, // Zero fee to avoid token transfer issues in test
+        &fee_recipient,
+    );
+
+    assert_eq!(trade_id, 1);
+
+    // Verify stats updated correctly
+    let stats = client.get_stats();
+    assert_eq!(stats.total_trades, 1);
+    assert_eq!(stats.total_volume, 1_000_000);
+}
+
+#[test]
+fn test_optimized_trade_signed_amount() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    env.mock_all_auths();
+
+    let (client, _admin, _approver, _executor) = setup_contract(&env);
+
+    let trader = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(fee_recipient.clone());
+
+    // Execute buy trade (positive amount)
+    let buy_id = client.trade(
+        &trader,
+        &symbol_short!("BTCUSD"),
+        &1_000_000i128,
+        &50_000i128,
+        &true,
+        &token_id,
+        &0i128,
+        &fee_recipient,
+    );
+
+    // Execute sell trade (negative amount internally)
+    let sell_id = client.trade(
+        &trader,
+        &symbol_short!("BTCUSD"),
+        &500_000i128,
+        &49_000i128,
+        &false,
+        &token_id,
+        &0i128,
+        &fee_recipient,
+    );
+
+    assert_eq!(buy_id, 1);
+    assert_eq!(sell_id, 2);
+
+    // Verify both trades recorded
+    let stats = client.get_stats();
+    assert_eq!(stats.total_trades, 2);
+    assert_eq!(stats.total_volume, 1_500_000);
+}
+
+#[test]
+fn test_optimized_get_trade() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    env.mock_all_auths();
+
+    let (client, _admin, _approver, _executor) = setup_contract(&env);
+
+    let trader = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(fee_recipient.clone());
+
+    // Execute trade
+    let trade_id = client.trade(
+        &trader,
+        &symbol_short!("BTCUSD"),
+        &1_000_000i128,
+        &50_000i128,
+        &true,
+        &token_id,
+        &0i128,
+        &fee_recipient,
+    );
+
+    // Get specific trade by ID
+    let trade = client.get_trade(&trade_id);
+    assert!(trade.is_some());
+
+    let trade = trade.unwrap();
+    assert_eq!(trade.id, 1);
+    assert_eq!(trade.signed_amount, 1_000_000); // Positive = buy
+    assert_eq!(trade.price, 50_000);
+}
+
+#[test]
+fn test_optimized_get_recent_trades() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    env.mock_all_auths();
+
+    let (client, _admin, _approver, _executor) = setup_contract(&env);
+
+    let trader = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(fee_recipient.clone());
+
+    // Execute multiple trades
+    for i in 1..=5 {
+        client.trade(
+            &trader,
+            &symbol_short!("BTCUSD"),
+            &(i as i128 * 100_000),
+            &50_000i128,
+            &true,
+            &token_id,
+            &0i128,
+            &fee_recipient,
+        );
+    }
+
+    // Get recent trades
+    let recent = client.get_recent_trades(&3u32);
+    assert_eq!(recent.len(), 3);
+
+    // Should get trades 3, 4, 5
+    assert_eq!(recent.get(0).unwrap().id, 3);
+    assert_eq!(recent.get(1).unwrap().id, 4);
+    assert_eq!(recent.get(2).unwrap().id, 5);
+}
+
+#[test]
+fn test_optimized_pause_unpause() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    env.mock_all_auths();
+
+    let (client, admin, _approver, _executor) = setup_contract(&env);
+
+    let trader = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(fee_recipient.clone());
+
+    // Pause contract
+    client.pause(&admin);
+
+    // Try to trade (should fail)
+    let result = client.try_trade(
+        &trader,
+        &symbol_short!("BTCUSD"),
+        &1_000_000i128,
+        &50_000i128,
+        &true,
+        &token_id,
+        &0i128,
+        &fee_recipient,
+    );
+    assert!(result.is_err());
+
+    // Unpause
+    client.unpause(&admin);
+
+    // Trade should work now
+    let trade_id = client.trade(
+        &trader,
+        &symbol_short!("BTCUSD"),
+        &1_000_000i128,
+        &50_000i128,
+        &true,
+        &token_id,
+        &0i128,
+        &fee_recipient,
+    );
+    assert_eq!(trade_id, 1);
+}
+
+#[test]
+fn test_optimized_storage_scaling() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    env.mock_all_auths();
+
+    let (client, _admin, _approver, _executor) = setup_contract(&env);
+
+    let trader = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(fee_recipient.clone());
+
+    // Execute many trades to test storage scaling
+    for i in 1..=20 {
+        let trade_id = client.trade(
+            &trader,
+            &symbol_short!("BTCUSD"),
+            &(i as i128 * 100_000),
+            &50_000i128,
+            &(i % 2 == 0), // Alternate buy/sell
+            &token_id,
+            &0i128,
+            &fee_recipient,
+        );
+        assert_eq!(trade_id, i as u64);
+    }
+
+    // Verify stats
+    let stats = client.get_stats();
+    assert_eq!(stats.total_trades, 20);
+
+    // Verify individual trade access still works
+    let trade_10 = client.get_trade(&10u64);
+    assert!(trade_10.is_some());
+    assert_eq!(trade_10.unwrap().id, 10);
+}

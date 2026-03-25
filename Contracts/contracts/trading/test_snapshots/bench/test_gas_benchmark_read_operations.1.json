@@ -349,7 +349,7 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "get_version"
+                "symbol": "get_stats"
               }
             ],
             "data": "void"
@@ -370,11 +370,31 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "get_version"
+                "symbol": "get_stats"
               }
             ],
             "data": {
-              "u32": 1
+              "map": [
+                {
+                  "key": {
+                    "symbol": "total_trades"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "total_volume"
+                  },
+                  "val": {
+                    "i128": {
+                      "hi": 0,
+                      "lo": 0
+                    }
+                  }
+                }
+              ]
             }
           }
         }

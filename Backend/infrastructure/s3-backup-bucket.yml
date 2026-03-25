@@ -1,0 +1,362 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stellara Backup Infrastructure - S3 Buckets for PostgreSQL Backups and WAL Archives'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Deployment environment
+
+  PrimaryRegion:
+    Type: String
+    Default: us-east-1
+    Description: Primary AWS region for backups
+
+  ReplicationRegion:
+    Type: String
+    Default: us-west-2
+    Description: Secondary AWS region for cross-region replication
+
+Resources:
+  # ============================================================================
+  # KMS Key for Backup Encryption
+  # ============================================================================
+  BackupKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: 'KMS key for encrypting Stellara database backups'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow backup service access
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt BackupServiceRole.Arn
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: '*'
+
+  BackupKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/stellara-backup-${Environment}'
+      TargetKeyId: !Ref BackupKMSKey
+
+  # ============================================================================
+  # S3 Bucket for Full Backups
+  # ============================================================================
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'stellara-backups-${Environment}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref BackupKMSKey
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          # Transition daily backups to IA after 30 days
+          - Id: DailyToIA
+            Status: Enabled
+            Prefix: postgresql/daily/
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: 365
+          # Transition weekly backups to Glacier after 60 days
+          - Id: WeeklyToGlacier
+            Status: Enabled
+            Prefix: postgresql/weekly/
+            Transitions:
+              - TransitionInDays: 60
+                StorageClass: GLACIER
+            ExpirationInDays: 730
+          # Transition monthly backups to Deep Archive
+          - Id: MonthlyToDeepArchive
+            Status: Enabled
+            Prefix: postgresql/monthly/
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: DEEP_ARCHIVE
+            ExpirationInDays: 2555  # 7 years
+          # Clean up incomplete multipart uploads
+          - Id: CleanupIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      ReplicationConfiguration:
+        Role: !GetAtt ReplicationRole.Arn
+        Rules:
+          - Id: CrossRegionReplication
+            Status: Enabled
+            Priority: 1
+            DeleteMarkerReplication:
+              Status: Enabled
+            Destination:
+              Bucket: !Sub 'arn:aws:s3:::stellara-backups-${Environment}-replica-${AWS::AccountId}'
+              EncryptionConfiguration:
+                ReplicaKmsKeyID: !Sub 'arn:aws:kms:${ReplicationRegion}:${AWS::AccountId}:alias/stellara-backup-${Environment}'
+              StorageClass: STANDARD_IA
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: DatabaseBackups
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  BackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BackupBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureConnections
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub '${BackupBucket.Arn}/*'
+              - !GetAtt BackupBucket.Arn
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # ============================================================================
+  # S3 Bucket for WAL Archives
+  # ============================================================================
+  WALArchiveBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'stellara-wal-archives-${Environment}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref BackupKMSKey
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          # WAL archives transition to IA after 7 days
+          - Id: WALToIA
+            Status: Enabled
+            Prefix: wal/
+            Transitions:
+              - TransitionInDays: 7
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 30
+                StorageClass: GLACIER
+            ExpirationInDays: 90
+          # Clean up incomplete multipart uploads
+          - Id: CleanupIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: WALArchives
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  WALArchiveBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WALArchiveBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureConnections
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub '${WALArchiveBucket.Arn}/*'
+              - !GetAtt WALArchiveBucket.Arn
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # ============================================================================
+  # IAM Roles
+  # ============================================================================
+  BackupServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'stellara-backup-service-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  BackupServicePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub 'stellara-backup-policy-${Environment}'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3BackupAccess
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:ListBucket
+              - s3:GetObjectVersion
+              - s3:DeleteObjectVersion
+            Resource:
+              - !GetAtt BackupBucket.Arn
+              - !Sub '${BackupBucket.Arn}/*'
+              - !GetAtt WALArchiveBucket.Arn
+              - !Sub '${WALArchiveBucket.Arn}/*'
+          - Sid: KMSAccess
+            Effect: Allow
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: !GetAtt BackupKMSKey.Arn
+      Roles:
+        - !Ref BackupServiceRole
+
+  ReplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'stellara-backup-replication-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sts:AssumeRole
+
+  ReplicationPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub 'stellara-replication-policy-${Environment}'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3Replication
+            Effect: Allow
+            Action:
+              - s3:GetObjectVersion
+              - s3:GetObjectVersionAcl
+              - s3:GetObjectVersionTagging
+              - s3:ListBucket
+              - s3:ReplicateObject
+              - s3:ReplicateDelete
+              - s3:ReplicateTags
+              - s3:GetObjectVersionForReplication
+            Resource:
+              - !GetAtt BackupBucket.Arn
+              - !Sub '${BackupBucket.Arn}/*'
+          - Sid: KMSAccess
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: !GetAtt BackupKMSKey.Arn
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 's3.${AWS::Region}.amazonaws.com'
+          - Sid: KMSAccessReplica
+            Effect: Allow
+            Action:
+              - kms:Encrypt
+            Resource: !Sub 'arn:aws:kms:${ReplicationRegion}:${AWS::AccountId}:key/*'
+      Roles:
+        - !Ref ReplicationRole
+
+  # ============================================================================
+  # CloudWatch Alarms
+  # ============================================================================
+  BackupBucketSizeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'stellara-backup-size-${Environment}'
+      AlarmDescription: 'Alert when backup bucket grows unexpectedly large'
+      MetricName: BucketSizeBytes
+      Namespace: AWS/S3
+      Statistic: Average
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 107374182400  # 100 GB
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: BucketName
+          Value: !Ref BackupBucket
+        - Name: StorageType
+          Value: StandardStorage
+
+Outputs:
+  BackupBucketName:
+    Description: 'Name of the backup S3 bucket'
+    Value: !Ref BackupBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupBucket'
+
+  WALArchiveBucketName:
+    Description: 'Name of the WAL archive S3 bucket'
+    Value: !Ref WALArchiveBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-WALArchiveBucket'
+
+  BackupKMSKeyArn:
+    Description: 'ARN of the backup encryption KMS key'
+    Value: !GetAtt BackupKMSKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupKMSKey'
+
+  BackupServiceRoleArn:
+    Description: 'ARN of the backup service IAM role'
+    Value: !GetAtt BackupServiceRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupServiceRole'

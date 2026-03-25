@@ -2,6 +2,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { BackupModule } from './backup/backup.module';
 import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './database.module';
 import { ErrorHandlingModule } from './common/error-handling.module';
@@ -11,7 +12,7 @@ import { Module } from '@nestjs/common';
 import { NotificationModule } from './notification/notification.module';
 import { ReputationModule } from './reputation/reputation.module';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { ThrottlerStorageRedisService } from '@nestjs/throttler-storage-redis';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { UserController } from './user.controller';
 import { WebsocketModule } from './websocket/websocket.module';
 import { validateEnv } from './config/env.validation';
@@ -51,6 +52,8 @@ import { validateEnv } from './config/env.validation';
     NotificationModule,
     AuthModule,
     WebsocketModule,
+    // Backup and disaster recovery module
+    BackupModule,
   ],
   controllers: [AppController, UserController],
   providers: [AppService],
