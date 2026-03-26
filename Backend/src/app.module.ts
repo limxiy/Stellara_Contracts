@@ -1,4 +1,6 @@
 import { AbiRegistryModule } from './abi-registry/abi-registry.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+
 import { AdminModule } from './admin/admin.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -29,6 +31,7 @@ import { UserController } from './user.controller';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { validateEnv } from './config/env.validation';
+
 import { SupportModule } from './support/support.module';
 import { MultisigModule } from './multisig/multisig.module';
 
@@ -84,6 +87,7 @@ import { MultisigModule } from './multisig/multisig.module';
     AbiRegistryModule,
     SupportModule,
     MultisigModule,
+    AnalyticsModule,
   ],
   controllers: [AppController, UserController, DocsController],
   providers: [AppService],
