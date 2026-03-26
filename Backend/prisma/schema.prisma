@@ -321,6 +321,8 @@ enum Role {
   TENANT_ADMIN
   USER
   VIEWER
+  SUPPORT_AGENT
+  SUPPORT_MANAGER
 }
 
 enum TenantStatus {
@@ -894,4 +896,119 @@ enum AbiRegistryStatus {
   ACTIVE
   DEPRECATED
   ARCHIVED
+}
+
+// ─── Support Tools Models ──────────────────────────────────────────────────────
+
+model SupportNote {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  authorId    String   @map("author_id")
+  content     String
+  type        NoteType @default(GENERAL)
+  isInternal  Boolean  @default(false) @map("is_internal")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("support_notes")
+}
+
+model SupportAction {
+  id            String        @id @default(cuid())
+  userId        String        @map("user_id")
+  agentId       String        @map("agent_id")
+  actionType    ActionType    @map("action_type")
+  description   String
+  metadata      Json?
+  ipAddress     String?       @map("ip_address")
+  userAgent     String?       @map("user_agent")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  @@map("support_actions")
+}
+
+model ManualAdjustment {
+  id              String              @id @default(cuid())
+  userId          String              @map("user_id")
+  agentId         String              @map("agent_id")
+  adjustmentType  AdjustmentType      @map("adjustment_type")
+  amount          Decimal?            @db.Decimal(18, 4)
+  currency        String              @default("USD")
+  reason          String
+  referenceId     String?             @map("reference_id")
+  referenceType   String?             @map("reference_type")
+  status          AdjustmentStatus    @default(PENDING)
+  approvedById    String?             @map("approved_by_id")
+  approvedAt      DateTime?           @map("approved_at")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  @@map("manual_adjustments")
+}
+
+model ZendeskTicket {
+  id            String            @id @default(cuid())
+  ticketId      Int               @unique @map("ticket_id")
+  userId        String?           @map("user_id")
+  subject       String
+  description   String
+  status        ZendeskStatus     @default(OPEN)
+  priority      ZendeskPriority   @default(NORMAL)
+  assigneeId    String?           @map("assignee_id")
+  metadata      Json?
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  @@map("zendesk_tickets")
+}
+
+enum NoteType {
+  GENERAL
+  WARNING
+  SUSPICIOUS_ACTIVITY
+  COMPLIMENT
+  ESCALATION
+}
+
+enum ActionType {
+  ACCOUNT_LOCK
+  ACCOUNT_UNLOCK
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+  PHONE_VERIFICATION
+  IMPERSONATION_START
+  IMPERSONATION_END
+  MANUAL_ADJUSTMENT
+  NOTE_ADDED
+  ESCALATION
+}
+
+enum AdjustmentType {
+  CREDIT
+  DEBIT
+  REFUND
+  BONUS
+  PENALTY
+}
+
+enum AdjustmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSED
+  FAILED
+}
+
+enum ZendeskStatus {
+  OPEN
+  PENDING
+  SOLVED
+  CLOSED
+}
+
+enum ZendeskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
 }
