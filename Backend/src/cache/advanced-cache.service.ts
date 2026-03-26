@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RedisService } from '../redis/redis.service';
+import { CacheWarmingService } from './cache-warming.service';
 
 type CacheStats = {
   l1Hits: number;
@@ -64,7 +65,10 @@ export class AdvancedCacheService {
     process.env.CACHE_HOTKEY_TTL_BOOST_SECONDS ?? 120,
   );
 
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    private readonly warmingService: CacheWarmingService,
+  ) {}
 
   private l1TtlSeconds(options?: CacheOptions): number {
     return options?.ttlSeconds ?? this.defaultTtlSeconds;
@@ -192,6 +196,7 @@ export class AdvancedCacheService {
     const l1Value = this.getL1(effective);
     if (l1Value !== undefined) {
       this.stats.l1Hits += 1;
+      this.warmingService.recordAccess({ key: baseKey, timestamp: nowMs() });
       return l1Value as T;
     }
 
@@ -199,6 +204,7 @@ export class AdvancedCacheService {
     const inflight = this.inflight.get(effective);
     if (inflight) {
       this.stats.inflightCoalesced += 1;
+      this.warmingService.recordAccess({ key: baseKey, timestamp: nowMs() });
       return (await inflight) as T;
     }
 
@@ -206,6 +212,7 @@ export class AdvancedCacheService {
     const l2Raw = await redis.get(`cache:l2:${effective}`);
     if (l2Raw !== null && l2Raw !== undefined) {
       this.stats.l2Hits += 1;
+      this.warmingService.recordAccess({ key: baseKey, timestamp: nowMs() });
       try {
         const parsed = JSON.parse(l2Raw) as T;
         this.setL1(effective, parsed, ttlSeconds);
@@ -214,6 +221,7 @@ export class AdvancedCacheService {
         // fall through to fetcher
       }
     }
+    this.warmingService.recordAccess({ key: baseKey, timestamp: nowMs() });
 
     this.stats.misses += 1;
     const promise = fetcher()
