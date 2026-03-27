@@ -20,6 +20,7 @@ import { LifecycleModule } from './lifecycle/lifecycle.module';
 import { LoggingModule } from './logging/logging.module';
 import { Module } from '@nestjs/common';
 import { PaymentModule } from './payment/payment.module';
+import { FraudModule } from './fraud/fraud.module';
 import { PrismaModule } from './prisma.module';
 import { QuotaModule } from './quota/quota.module';
 import { RabbitmqModule } from './messaging/rabbitmq/rabbitmq.module';
@@ -46,9 +47,11 @@ import { ObjectStorageModule } from './object-storage/object-storage.module';
 import { ZkModule } from './zk/zk.module';
 import { FailoverModule } from './failover/failover.module';
 import { IdentityModule } from './identity/identity.module';
+import { ClearingModule } from './clearing/clearing.module';
 import { CostMonitoringModule } from './cost-monitoring/cost-monitoring.module';
 import { CircuitBreakerModule } from './circuit-breaker/circuit-breaker.module';
 import { DataRetentionModule } from './data-retention/data-retention.module';
+import { DocumentProcessingModule } from './document-processing/document.module';
 import { DataResidencyModule } from './data-residency/data-residency.module';
 import { PredictiveMaintenanceModule } from './predictive-maintenance/predictive-maintenance.module';
 import { SecretsManagementModule } from './secrets-management/secrets-management.module';
@@ -96,6 +99,7 @@ import { TransactionQueueModule } from './transaction-queue/transaction-queue.mo
     AuthModule,
     WebsocketModule,
     PaymentModule,
+    FraudModule,
     // Backup and disaster recovery module
     BackupModule,
     QuotaModule,
@@ -121,6 +125,8 @@ import { TransactionQueueModule } from './transaction-queue/transaction-queue.mo
     ObjectStorageModule,
     ZkModule,
     IdentityModule,
+    ClearingModule,
+    DocumentProcessingModule,
     FailoverModule,
     CostMonitoringModule,
     DataResidencyModule,
