@@ -79,6 +79,7 @@
     "ioredis": "^5.10.1",
     "ipfs-http-client": "^60.0.1",
     "arweave": "^1.15.0",
+    
     "snarkjs": "^0.7.0",
     "lodash": "^4.17.23",
     "nestjs-pino": "^4.0.0",
