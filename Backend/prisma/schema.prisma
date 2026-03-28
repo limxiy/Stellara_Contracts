@@ -1498,5 +1498,117 @@ enum DocumentType {
   PASSPORT
   DRIVERS_LICENSE
   NATIONAL_ID
+
+// ─── Predictive Settlement Engine ───────────────────────────────────────────
+
+model NetworkCongestionSnapshot {
+  id                  String   @id @default(cuid())
+  network             String   @default("stellar")
+  ledgerSeq           Int?     @map("ledger_seq")
+  baseFeeStroops      Int      @map("base_fee_stroops")
+  priorityFeeStroops  Int      @default(0) @map("priority_fee_stroops")
+  txVolumePerLedger   Int      @map("tx_volume_per_ledger")
+  ledgerCloseTimeMs   Int      @map("ledger_close_time_ms")
+  congestionScore     Float    @map("congestion_score")        // 0.0–1.0
+  predictedScoreP5m   Float?   @map("predicted_score_p5m")    // 5-min forecast
+  predictedScoreP10m  Float?   @map("predicted_score_p10m")   // 10-min forecast
+  predictedScoreP15m  Float?   @map("predicted_score_p15m")   // 15-min forecast
+  predictedFeeP5m     Int?     @map("predicted_fee_p5m")      // stroops
+  predictedFeeP10m    Int?     @map("predicted_fee_p10m")
+  predictedFeeP15m    Int?     @map("predicted_fee_p15m")
+  p95FeeThreshold     Int?     @map("p95_fee_threshold")
+  recordedAt          DateTime @default(now()) @map("recorded_at")
+
+  @@index([network, recordedAt])
+  @@index([recordedAt])
+  @@map("network_congestion_snapshots")
+}
+
+model SettlementJob {
+  id                 String              @id @default(cuid())
+  idempotencyKey     String              @unique @map("idempotency_key")
+  settlementType     String              @map("settlement_type")   // e.g. "clearing", "claim", "swap"
+  signerAddress      String              @map("signer_address")
+  contractAddress    String?             @map("contract_address")
+  payload            Json
+  urgency            SettlementUrgency   @default(NORMAL)
+  status             SettlementJobStatus @default(QUEUED)
+  priority           Int                 @default(50)              // 0–100 computed score
+  deadlineAt         DateTime?           @map("deadline_at")       // SLA deadline
+  slaMinutes         Int                 @default(60) @map("sla_minutes")
+  scheduledAt        DateTime?           @map("scheduled_at")      // optimal submission time
+  submittedAt        DateTime?           @map("submitted_at")
+  confirmedAt        DateTime?           @map("confirmed_at")
+  txHash             String?             @map("tx_hash")
+  feePaidStroops     Int?                @map("fee_paid_stroops")
+  estimatedFeeSaved  Int?                @map("estimated_fee_saved")
+  l2Provider         String?             @map("l2_provider")       // null = L1
+  congestionAtSubmit Float?              @map("congestion_at_submit")
+  failureReason      String?             @map("failure_reason")
+  attempts           Int                 @default(0)
+  maxAttempts        Int                 @default(5) @map("max_attempts")
+  metadata           Json?
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+
+  slaRecord          SettlementSlaRecord?
+
+  @@index([status, scheduledAt])
+  @@index([urgency, status])
+  @@index([signerAddress, status])
+  @@index([createdAt])
+  @@map("settlement_jobs")
+}
+
+model SettlementCostSaving {
+  id               String   @id @default(cuid())
+  settlementJobId  String?  @map("settlement_job_id")
+  network          String   @default("stellar")
+  feePaidStroops   Int      @map("fee_paid_stroops")
+  baselineFeeStroops Int    @map("baseline_fee_stroops")     // fee that would have been paid without optimization
+  savedStroops     Int      @map("saved_stroops")
+  savedUsd         Float?   @map("saved_usd")
+  strategy         String                                    // e.g. "deferred", "l2_offload", "batch"
+  recordedAt       DateTime @default(now()) @map("recorded_at")
+
+  @@index([recordedAt])
+  @@index([network, recordedAt])
+  @@map("settlement_cost_savings")
+}
+
+model SettlementSlaRecord {
+  id                 String   @id @default(cuid())
+  settlementJobId    String   @unique @map("settlement_job_id")
+  job                SettlementJob @relation(fields: [settlementJobId], references: [id], onDelete: Cascade)
+  slaMinutes         Int      @map("sla_minutes")
+  deadlineAt         DateTime @map("deadline_at")
+  confirmedAt        DateTime? @map("confirmed_at")
+  actualMinutes      Float?   @map("actual_minutes")
+  slaBreached        Boolean  @default(false) @map("sla_breached")
+  breachMarginMinutes Float?  @map("breach_margin_minutes")  // negative = breached by N minutes
+  urgency            SettlementUrgency
+  recordedAt         DateTime @default(now()) @map("recorded_at")
+
+  @@index([slaBreached, recordedAt])
+  @@index([urgency, slaBreached])
+  @@map("settlement_sla_records")
+}
+
+enum SettlementUrgency {
+  LOW
+  NORMAL
+  HIGH
+  URGENT   // >95th percentile priority
+}
+
+enum SettlementJobStatus {
+  QUEUED
+  SCHEDULED
+  PROCESSING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+  CANCELLED
+}
 }
 

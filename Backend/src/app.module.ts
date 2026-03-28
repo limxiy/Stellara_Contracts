@@ -59,6 +59,7 @@ import { SecretsManagementModule } from './secrets-management/secrets-management
 import { TransactionQueueModule } from './transaction-queue/transaction-queue.module';
 import { LiquidityAggregationModule } from './liquidity-aggregation/liquidity-aggregation.module';
 import { CrossChainSwapModule } from './cross-chain-swap/cross-chain-swap.module';
+import { PredictiveSettlementModule } from './predictive-settlement/predictive-settlement.module';
 
 
 @Module({
@@ -141,6 +142,7 @@ import { CrossChainSwapModule } from './cross-chain-swap/cross-chain-swap.module
     SecretsManagementModule,
     LiquidityAggregationModule,
     CrossChainSwapModule,
+      PredictiveSettlementModule,
     CollateralModule,
     GeolocationModule,
 
