@@ -61,6 +61,9 @@ import { SupplyChainFinanceModule } from './supply-chain-finance/supply-chain-fi
 import { LiquidityAggregationModule } from './liquidity-aggregation/liquidity-aggregation.module';
 import { CrossChainSwapModule } from './cross-chain-swap/cross-chain-swap.module';
 import { PredictiveSettlementModule } from './predictive-settlement/predictive-settlement.module';
+import { HFTModule } from './hft/hft.module';
+import { QuantumCryptoModule } from './crypto/quantum/quantum-crypto.module';
+import { AIAuditorModule } from './ai-auditor/ai-auditor.module';
 
 
 @Module({
@@ -144,9 +147,12 @@ import { PredictiveSettlementModule } from './predictive-settlement/predictive-s
     SupplyChainFinanceModule,
     LiquidityAggregationModule,
     CrossChainSwapModule,
-      PredictiveSettlementModule,
+    PredictiveSettlementModule,
     CollateralModule,
     GeolocationModule,
+    HFTModule,
+    QuantumCryptoModule,
+    AIAuditorModule,
 
   ],
   controllers: [AppController, UserController, DocsController],
