@@ -1,24 +1,45 @@
 import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../src/prisma.service';
 import { PricingService } from './pricing.service';
 import { PoolService } from './pool.service';
-import { InsurancePolicy } from './entities/insurance-policy.entity';
-import { Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
 import { RiskType } from './enums/risk-type.enum';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class InsuranceService {
   constructor(
+    private readonly prisma: PrismaService,
     private readonly pricing: PricingService,
     private readonly pools: PoolService,
-    @InjectRepository(InsurancePolicy) private readonly repo: Repository<InsurancePolicy>,
   ) {}
 
   async purchasePolicy(userId: string, poolId: string, riskType: RiskType, coverageAmount: number) {
     const premium = this.pricing.calculatePremium(riskType, coverageAmount);
     await this.pools.lockCapital(poolId, coverageAmount);
 
-    const policy = this.repo.create({ userId, poolId, riskType, coverageAmount, premium });
-    return this.repo.save(policy);
+    const policy = await this.prisma.insurancePolicy.create({
+      data: {
+        userId,
+        poolId,
+        riskType: riskType as any,
+        premium: premium.toString(),
+        coverageAmount: coverageAmount.toString(),
+      },
+    });
+
+    return policy;
+  }
+
+  async getPoliciesByUser(userId: string) {
+    return this.prisma.insurancePolicy.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getPolicyById(policyId: string) {
+    return this.prisma.insurancePolicy.findUnique({
+      where: { id: policyId },
+    });
   }
 }

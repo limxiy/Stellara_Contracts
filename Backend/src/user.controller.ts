@@ -1,7 +1,9 @@
 import { Controller, Get, Param } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { PrismaService } from './prisma.service';
 
 @Controller('api/user')
+@Throttle({ default: { limit: 30, ttl: 60000 } })
 export class UserController {
   constructor(private readonly prisma: PrismaService) {}
 

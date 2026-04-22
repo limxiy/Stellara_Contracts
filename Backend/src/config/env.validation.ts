@@ -18,25 +18,22 @@ class EnvironmentVariables {
   API_PREFIX: string;
 
   @IsString()
-  DATABASE_HOST: string;
-
-  @IsNumber()
-  DATABASE_PORT: number;
-
-  @IsString()
-  DATABASE_USER: string;
-
-  @IsString()
-  DATABASE_PASSWORD: string;
-
-  @IsString()
-  DATABASE_NAME: string;
+  DATABASE_URL: string;
 
   @IsString()
   REDIS_HOST: string;
 
   @IsNumber()
   REDIS_PORT: number;
+
+  @IsString()
+  IPFS_HOST: string;
+
+  @IsNumber()
+  IPFS_PORT: number;
+
+  @IsString()
+  IPFS_PROTOCOL: string;
 
   @IsString()
   JWT_SECRET: string;

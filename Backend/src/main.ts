@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
+import { PrismaService } from './prisma.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -22,6 +23,16 @@ async function bootstrap() {
 
   // CORS
   app.enableCors();
+
+  // Database connection validation
+  const prismaService = app.get(PrismaService);
+  try {
+    await prismaService.$connect();
+    console.log('Database connection established successfully');
+  } catch (error) {
+    console.error('Failed to connect to database:', error.message);
+    process.exit(1);
+  }
 
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port);

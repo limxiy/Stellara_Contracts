@@ -5,6 +5,8 @@ import { IndexerService } from './services/indexer.service';
 import { LedgerTrackerService } from './services/ledger-tracker.service';
 import { EventHandlerService } from './services/event-handler.service';
 import { DatabaseModule } from '../database.module';
+import { NotificationModule } from '../notification/notification.module';
+import { ReputationModule } from '../reputation/reputation.module';
 import stellarConfig, { indexerConfig } from '../config/stellar.config';
 
 /**
@@ -19,6 +21,10 @@ import stellarConfig, { indexerConfig } from '../config/stellar.config';
     ScheduleModule.forRoot(),
     // Database access
     DatabaseModule,
+    // Notification service for event-driven notifications
+    NotificationModule,
+    // Reputation service for trust score updates
+    ReputationModule,
     // Configuration
     ConfigModule.forFeature(stellarConfig),
     ConfigModule.forFeature(indexerConfig),

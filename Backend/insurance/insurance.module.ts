@@ -1,10 +1,5 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-
-import { InsurancePolicy } from './entities/insurance-policy.entity';
-import { InsurancePool } from './entities/insurance-pool.entity';
-import { Claim } from './entities/claim.entity';
-import { ReinsuranceContract } from './entities/reinsurance-contract.entity';
+import { DatabaseModule } from '../src/database.module';
 
 import { InsuranceController } from './insurance.controller';
 
@@ -15,14 +10,7 @@ import { ReinsuranceService } from './reinsurance.service';
 import { PricingService } from './pricing.service';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([
-      InsurancePolicy,
-      InsurancePool,
-      Claim,
-      ReinsuranceContract,
-    ]),
-  ],
+  imports: [DatabaseModule],
   controllers: [InsuranceController],
   providers: [
     InsuranceService,

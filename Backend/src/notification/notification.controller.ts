@@ -1,7 +1,9 @@
 import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma.service';
 
 @Controller('notifications')
+@Throttle({ default: { limit: 10, ttl: 60000 } })
 export class NotificationController {
     constructor(private readonly prisma: PrismaService) { }
 

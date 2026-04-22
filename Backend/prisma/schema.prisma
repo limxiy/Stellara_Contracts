@@ -220,3 +220,61 @@ enum EmailStatus {
   SENT
   FAILED
 }
+
+// Insurance Module Models
+
+enum RiskType {
+  PROJECT_FAILURE
+  SMART_CONTRACT_EXPLOIT
+  MARKET_VOLATILITY
+}
+
+enum ClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model InsurancePolicy {
+  id             String    @id @default(cuid())
+  userId         String    @map("user_id")
+  poolId         String    @map("pool_id")
+  riskType       RiskType  @map("risk_type")
+  premium        Decimal   @map("premium")
+  coverageAmount Decimal   @map("coverage_amount")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@map("insurance_policies")
+}
+
+model InsurancePool {
+  id            String   @id @default(cuid())
+  name          String
+  capital       Decimal  @default(0)
+  lockedCapital Decimal  @default(0) @map("locked_capital")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("insurance_pools")
+}
+
+model Claim {
+  id           String      @id @default(cuid())
+  policyId     String      @map("policy_id")
+  claimAmount  Decimal     @map("claim_amount")
+  status       ClaimStatus @default(PENDING)
+  payoutAmount Decimal?    @map("payout_amount")
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  @@map("claims")
+}
+
+model ReinsuranceContract {
+  id             String   @id @default(cuid())
+  poolId         String   @map("pool_id")
+  coverageLimit  Decimal  @map("coverage_limit")
+  premiumRate    Decimal  @map("premium_rate")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("reinsurance_contracts")
+}

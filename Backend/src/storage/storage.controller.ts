@@ -1,7 +1,9 @@
 import { Controller, Post, Body } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { StorageService } from './storage.service';
 
 @Controller('projects')
+@Throttle({ default: { limit: 20, ttl: 60000 } })
 export class StorageController {
   constructor(private readonly storageService: StorageService) {}
 

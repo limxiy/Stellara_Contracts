@@ -1,14 +1,26 @@
 import { Injectable } from '@nestjs/common';
-import { ReinsuranceContract } from './entities/reinsurance-contract.entity';
-import { Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
+import { PrismaService } from '../src/prisma.service';
 
 @Injectable()
 export class ReinsuranceService {
-  constructor(@InjectRepository(ReinsuranceContract) private readonly repo: Repository<ReinsuranceContract>) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async createContract(poolId: string, coverageLimit: number, premiumRate: number) {
-    const contract = this.repo.create({ poolId, coverageLimit, premiumRate });
-    return this.repo.save(contract);
+    const contract = await this.prisma.reinsuranceContract.create({
+      data: {
+        poolId,
+        coverageLimit: coverageLimit.toString(),
+        premiumRate: premiumRate.toString(),
+      },
+    });
+
+    return contract;
+  }
+
+  async getContractsByPool(poolId: string) {
+    return this.prisma.reinsuranceContract.findMany({
+      where: { poolId },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 }
