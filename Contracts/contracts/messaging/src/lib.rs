@@ -6,7 +6,8 @@ use shared::circuit_breaker::{
 };
 use shared::governance::{GovernanceManager, GovernanceRole, UpgradeProposal};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Map, String, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Map, String, Symbol,
+    Vec,
 };
 
 const CONTRACT_VERSION: u32 = 1;
@@ -67,6 +68,27 @@ pub struct MessageRead {
     pub timestamp: u64,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncryptedMessage {
+    pub id: u64,
+    pub sender: Address,
+    pub recipient: Address,
+    pub payload: Bytes,
+    pub timestamp: u64,
+    pub read: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EncryptedMessageSent {
+    pub message_id: u64,
+    pub sender: Address,
+    pub recipient: Address,
+    pub timestamp: u64,
+    pub payload_length: u32,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum MessagingError {
@@ -112,6 +134,13 @@ fn get_messages_map(env: &Env) -> Map<u64, Message> {
     env.storage()
         .persistent()
         .get(&symbol_short!("msgs"))
+        .unwrap_or_else(|| Map::new(env))
+}
+
+fn get_encrypted_messages_map(env: &Env) -> Map<u64, EncryptedMessage> {
+    env.storage()
+        .persistent()
+        .get(&symbol_short!("enc_msgs"))
         .unwrap_or_else(|| Map::new(env))
 }
 
@@ -771,6 +800,205 @@ impl UpgradeableMessagingContract {
 
         GovernanceManager::cancel_proposal(&env, proposal_id, admin)
             .map_err(|_| MessagingError::Unauthorized)
+    }
+
+    pub fn register_encryption_key(
+        env: Env,
+        user: Address,
+        key: Bytes,
+    ) -> Result<(), MessagingError> {
+        user.require_auth();
+        require_initialized(&env)?;
+
+        let mut keys = env
+            .storage()
+            .persistent()
+            .get(&symbol_short!("enc_keys"))
+            .unwrap_or_else(|| Map::<Address, Bytes>::new(&env));
+        keys.set(user.clone(), key.clone());
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("enc_keys"), &keys);
+
+        env.events()
+            .publish((symbol_short!("key_reg"),), (user, key));
+        Ok(())
+    }
+
+    pub fn send_encrypted_message(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        payload: Bytes,
+    ) -> Result<u64, MessagingError> {
+        sender.require_auth();
+        require_initialized(&env)?;
+        check_and_consume_message_rate_limit(&env, &sender)?;
+
+        CircuitBreaker::require_not_paused(&env, symbol_short!("send_em"));
+        CircuitBreaker::track_activity(&env, 1);
+
+        if sender == recipient {
+            return Err(MessagingError::InvalidRecipient);
+        }
+
+        let payload_len = payload.len();
+        if payload_len == 0 || payload_len > MAX_MESSAGE_LENGTH {
+            return Err(MessagingError::InvalidPayload);
+        }
+
+        let mut stats = get_stats_internal(&env);
+        let message_id = stats.last_message_id + 1;
+
+        let current_timestamp = env.ledger().timestamp();
+
+        let message = EncryptedMessage {
+            id: message_id,
+            sender: sender.clone(),
+            recipient: recipient.clone(),
+            payload,
+            timestamp: current_timestamp,
+            read: false,
+        };
+
+        let mut messages = get_encrypted_messages_map(&env);
+        messages.set(message_id, message);
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("enc_msgs"), &messages);
+
+        let inbox_key = symbol_short!("einbox");
+        let sent_key = symbol_short!("esent");
+
+        let mut recipient_ids = get_user_message_ids(&env, &inbox_key, &recipient);
+        recipient_ids.push_back(message_id);
+        set_user_message_ids(&env, &inbox_key, &recipient, recipient_ids);
+
+        let mut sender_ids = get_user_message_ids(&env, &sent_key, &sender);
+        sender_ids.push_back(message_id);
+        set_user_message_ids(&env, &sent_key, &sender, sender_ids);
+
+        let mut unread_counts = get_unread_counts(&env);
+        let unread_count = unread_counts.get(recipient.clone()).unwrap_or(0);
+        unread_counts.set(recipient.clone(), unread_count + 1);
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("unread"), &unread_counts);
+
+        stats.total_messages += 1;
+        stats.unread_messages += 1;
+        stats.last_message_id = message_id;
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("stats"), &stats);
+
+        let message_sent_event = EncryptedMessageSent {
+            message_id,
+            sender: sender.clone(),
+            recipient,
+            timestamp: current_timestamp,
+            payload_length: payload_len as u32,
+        };
+
+        env.events()
+            .publish((symbol_short!("emsg_sent"),), message_sent_event);
+
+        Ok(message_id)
+    }
+
+    pub fn get_encrypted_messages(
+        env: Env,
+        user: Address,
+        include_sent: bool,
+        include_received: bool,
+        unread_only: bool,
+    ) -> Result<Vec<EncryptedMessage>, MessagingError> {
+        user.require_auth();
+        require_initialized(&env)?;
+
+        let messages = get_encrypted_messages_map(&env);
+        let mut result = Vec::new(&env);
+
+        if include_received {
+            let inbox_key = symbol_short!("einbox");
+            let inbox_ids = get_user_message_ids(&env, &inbox_key, &user);
+            for message_id in inbox_ids.iter() {
+                if let Some(message) = messages.get(message_id) {
+                    if !unread_only || !message.read {
+                        result.push_back(message);
+                    }
+                }
+            }
+        }
+
+        if include_sent {
+            let sent_key = symbol_short!("esent");
+            let sent_ids = get_user_message_ids(&env, &sent_key, &user);
+            for message_id in sent_ids.iter() {
+                if let Some(message) = messages.get(message_id) {
+                    if !unread_only || !message.read {
+                        result.push_back(message);
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    pub fn mark_encrypted_as_read(
+        env: Env,
+        recipient: Address,
+        message_id: u64,
+    ) -> Result<(), MessagingError> {
+        recipient.require_auth();
+        require_initialized(&env)?;
+
+        let mut messages = get_encrypted_messages_map(&env);
+        let mut message = messages
+            .get(message_id)
+            .ok_or(MessagingError::MessageNotFound)?;
+
+        if message.recipient != recipient {
+            return Err(MessagingError::Unauthorized);
+        }
+
+        if message.read {
+            return Err(MessagingError::AlreadyRead);
+        }
+
+        let current_timestamp = env.ledger().timestamp();
+
+        message.read = true;
+        messages.set(message_id, message.clone());
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("enc_msgs"), &messages);
+
+        let mut unread_counts = get_unread_counts(&env);
+        let unread_count = unread_counts.get(recipient.clone()).unwrap_or(0);
+        unread_counts.set(recipient.clone(), unread_count.saturating_sub(1));
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("unread"), &unread_counts);
+
+        let mut stats = get_stats_internal(&env);
+        stats.unread_messages = stats.unread_messages.saturating_sub(1);
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("stats"), &stats);
+
+        let message_read_event = MessageRead {
+            message_id,
+            recipient,
+            sender: message.sender,
+            timestamp: current_timestamp,
+        };
+
+        env.events()
+            .publish((symbol_short!("emsg_read"),), message_read_event);
+
+        Ok(())
     }
 }
 
