@@ -5,10 +5,14 @@ import { EmailService } from './services/email.service';
 import { WebPushService } from './services/web-push.service';
 import { DeadlineAlertTask } from './tasks/deadline-alert.task';
 import { EmailRetryTask } from './tasks/email-retry.task';
+import { NotificationRetryTask } from './tasks/notification-retry.task';
 import { DatabaseModule } from '../database.module';
+import { MetricsModule } from '../metrics/metrics.module';
+import { NotificationsGateway } from './gateways/notifications.gateway';
+import { NotificationsStreamService } from './streams/notifications-stream.service';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, MetricsModule],
   controllers: [NotificationController],
   providers: [
     NotificationService,
@@ -16,7 +20,10 @@ import { DatabaseModule } from '../database.module';
     WebPushService,
     DeadlineAlertTask,
     EmailRetryTask,
+    NotificationRetryTask,
+    NotificationsGateway,
+    NotificationsStreamService,
   ],
-  exports: [NotificationService],
+  exports: [NotificationService, NotificationsGateway, NotificationsStreamService],
 })
 export class NotificationModule { }

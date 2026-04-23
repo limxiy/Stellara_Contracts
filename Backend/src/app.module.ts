@@ -14,6 +14,7 @@ import { NotificationModule } from './notification/notification.module';
 import { StorageModule } from './storage/storage.module';
 import { InsuranceModule } from '../insurance/insurance.module';
 import { RegenerativeFinanceModule } from './regenerative-finance/regenerative-finance.module';
+import { CompetitionModule } from './competition/competition.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 import { AppLogger } from './common/logger/app.logger';
@@ -47,6 +48,7 @@ import { AppCacheModule } from './cache/cache.module';
     StorageModule,
     InsuranceModule,
     RegenerativeFinanceModule,
+    CompetitionModule,
     AppCacheModule,
     UserModule,
   ],

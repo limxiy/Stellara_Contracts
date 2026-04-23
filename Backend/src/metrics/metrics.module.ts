@@ -35,7 +35,15 @@ import { MetricsService } from './metrics.service';
     makeGaugeProvider({ name: 'indexer_current_ledger', help: 'Current ledger being indexed' }),
     makeGaugeProvider({ name: 'indexer_network_ledger', help: 'Latest ledger on network' }),
     makeGaugeProvider({ name: 'indexer_lag_ledgers', help: 'Indexer lag in ledgers' }),
+    makeCounterProvider({ name: 'indexer_polls_total', help: 'Total indexer poll cycles', labelNames: ['status'] }),
+    makeHistogramProvider({ name: 'indexer_events_per_poll', help: 'Events fetched per poll cycle', buckets: [0, 1, 5, 10, 25, 50, 100, 250, 500] }),
     makeCounterProvider({ name: 'blockchain_events_processed_total', help: 'Blockchain events processed', labelNames: ['event_type'] }),
+
+    // RPC metrics
+    makeCounterProvider({ name: 'rpc_requests_total', help: 'Total RPC requests', labelNames: ['method', 'status'] }),
+    makeHistogramProvider({ name: 'rpc_request_duration_seconds', help: 'RPC request duration', labelNames: ['method'], buckets: [0.1, 0.5, 1, 2, 5, 10, 30] }),
+    makeCounterProvider({ name: 'rpc_errors_total', help: 'Total RPC errors', labelNames: ['error_type'] }),
+    makeGaugeProvider({ name: 'rpc_circuit_breaker_state', help: 'Circuit breaker state (0=closed, 1=open, 2=half-open)' }),
 
     // WebSocket metrics
     makeGaugeProvider({ name: 'websocket_connections_active', help: 'Active WebSocket connections' }),

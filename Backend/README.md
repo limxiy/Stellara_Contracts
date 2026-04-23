@@ -159,34 +159,43 @@ This project uses **HashiCorp Vault** for secure secrets management. Secrets are
 
 🗄️ Database & Migrations Workflow
 
-Para garantizar la integridad de los datos y la consistencia entre entornos, este proyecto utiliza **TypeORM Migrations** y **Docker**.
+Para garantizar la integridad de los datos y la consistencia entre entornos, este proyecto utiliza **Prisma Migrations** y **Docker**.
 
 1. Infraestructura Local
 Levanta la base de datos PostgreSQL utilizando el contenedor preconfigurado:
 bash
 docker-compose up -d
 
-Nota: La base de datos está mapeada al puerto 5433 para evitar conflictos con instalaciones locales preexistentes.
+Nota: La base de datos está mapeada al puerto 5432 para evitar conflictos con instalaciones locales preexistentes.
 
 2. Comandos de Migración
-Utiliza estos scripts para gestionar el esquema de la base de datos sin usar synchronize: true:
+Utiliza estos scripts para gestionar el esquema de la base de datos:
 
-Generar Migración: (Ejecutar después de modificar una entidad .entity.ts)
+Generar y Aplicar Migración: (Después de modificar schema.prisma)
+bash
+npm run db:migrate
 
-Bash
-npm run migration:generate -- src/database/migrations/NombreDeLaMigracion
-Aplicar Migraciones: (Sincroniza tu base de datos local con los últimos cambios)
+Generar Migración con Nombre Específico:
+bash
+npx prisma migrate dev --name NombreDeLaMigracion
 
-Bash
-npm run migration:run
+Aplicar Migraciones en Producción:
+bash
+npm run db:migrate:deploy
+
 Revertir Cambios: (Deshace la última migración aplicada)
+bash
+npx prisma migrate resolve --rolled-back
 
-Bash
-npm run migration:revert
+Studio para Visualizar la Base de Datos:
+bash
+npm run db:studio
 
-3. Buenas Prácticas 
+3. Buenas Prácticas
 Nunca modifiques manualmente las tablas en la base de datos; usa siempre archivos de migración.
 
-Revisa el archivo generado en src/database/migrations/ antes de hacer commit para asegurar que el SQL es el esperado.
+Revisa los archivos generados en prisma/migrations/ antes de hacer commit para asegurar que el SQL es el esperado.
 
-Asegúrate de que tu archivo .env apunte al puerto 5433 si usas el entorno Docker provisto.
+Asegúrate de que tu archivo .env apunte al puerto 5432 si usas el entorno Docker provisto.
+
+Para desarrollo local, usa `prisma db push` para sincronización rápida (no genera archivos de migración). Para producción, siempre usa migraciones.

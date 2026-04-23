@@ -2,6 +2,8 @@ import { plainToInstance } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
+  Max,
+  Min,
   IsNumber,
   IsOptional,
   IsString,
@@ -84,6 +86,8 @@ class EnvironmentVariables {
   REPUTATION_CONTRACT_ID?: string;
 
   @IsNumber()
+  @Min(1000)
+  @Max(60000)
   INDEXER_POLL_INTERVAL_MS: number;
 
   @IsNumber()

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '../../prisma.service';
 
 export type NotificationType = 'DEADLINE' | 'CONTRIBUTION' | 'MILESTONE' | 'SYSTEM';
 
@@ -61,7 +61,8 @@ export class NotificationDeduplicationService {
 
     const existing = await this.prisma.notification.findFirst({
       where: {
-        idempotencyKey: key,
+        type: opts.type,
+        title: { contains: opts.type },
         createdAt: { gte: since },
       },
       select: { id: true },

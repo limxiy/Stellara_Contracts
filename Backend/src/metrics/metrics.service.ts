@@ -16,11 +16,17 @@ export class MetricsService {
     @InjectMetric('indexer_current_ledger')    private readonly indexerCurrent: Gauge<string>,
     @InjectMetric('indexer_network_ledger')    private readonly indexerNetwork: Gauge<string>,
     @InjectMetric('indexer_lag_ledgers')       private readonly indexerLag: Gauge<string>,
+    @InjectMetric('indexer_polls_total')       private readonly indexerPolls: Counter<string>,
+    @InjectMetric('indexer_events_per_poll')   private readonly indexerEventsPerPoll: Histogram<string>,
     @InjectMetric('blockchain_events_processed_total') private readonly blockchainEvents: Counter<string>,
     @InjectMetric('websocket_connections_active') private readonly wsConnections: Gauge<string>,
     @InjectMetric('cache_hits_total')          private readonly cacheHits: Counter<string>,
     @InjectMetric('cache_misses_total')        private readonly cacheMisses: Counter<string>,
     @InjectMetric('db_query_duration_seconds') private readonly dbDuration: Histogram<string>,
+    @InjectMetric('rpc_requests_total')        private readonly rpcRequests: Counter<string>,
+    @InjectMetric('rpc_request_duration_seconds') private readonly rpcDuration: Histogram<string>,
+    @InjectMetric('rpc_errors_total')          private readonly rpcErrors: Counter<string>,
+    @InjectMetric('rpc_circuit_breaker_state') private readonly rpcCircuitState: Gauge<string>,
   ) {}
 
   // HTTP
@@ -57,6 +63,11 @@ export class MetricsService {
     this.indexerLag.set(Math.max(0, network - current));
   }
 
+  recordIndexerPoll(status: 'success' | 'partial' | 'error' | 'noop', eventCount: number) {
+    this.indexerPolls.inc({ status });
+    this.indexerEventsPerPoll.observe(eventCount);
+  }
+
   recordBlockchainEvent(eventType: string) {
     this.blockchainEvents.inc({ event_type: eventType });
   }
@@ -72,5 +83,22 @@ export class MetricsService {
   // DB
   recordDbQuery(operation: string, durationSec: number) {
     this.dbDuration.observe({ operation }, durationSec);
+  }
+
+  // RPC
+  recordRpcRequest(method: string, status: 'success' | 'error', durationSec?: number) {
+    this.rpcRequests.inc({ method, status });
+    if (durationSec !== undefined) {
+      this.rpcDuration.observe({ method }, durationSec);
+    }
+  }
+
+  recordRpcError(errorType: string) {
+    this.rpcErrors.inc({ error_type: errorType });
+  }
+
+  setRpcCircuitBreakerState(state: 'closed' | 'open' | 'half-open') {
+    const stateValue = state === 'closed' ? 0 : state === 'open' ? 1 : 2;
+    this.rpcCircuitState.set(stateValue);
   }
 }

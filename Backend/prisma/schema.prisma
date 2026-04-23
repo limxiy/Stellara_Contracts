@@ -32,6 +32,11 @@ model User {
   reputationBreakdown  ReputationScore?
   notificationSettings NotificationSetting?
   notifications        Notification[]
+  competitionParticipants CompetitionParticipant[]
+  competitionLeaderboard CompetitionLeaderboard[]
+  competitionAchievements CompetitionAchievement[]
+  antiCheatFlags      AntiCheatFlag[]
+  prizeDistributions  PrizeDistribution[]
 
   @@map("users")
 }
@@ -256,6 +261,28 @@ model EmailOutbox {
   @@map("email_outbox")
 }
 
+model NotificationOutbox {
+  id             String              @id @default(cuid())
+  notificationId String?             @map("notification_id")
+  userId         String              @map("user_id")
+  channel        NotificationChannel
+  status         DeliveryStatus      @default(PENDING)
+  dedupKey       String              @unique @map("dedup_key")
+  payload        Json
+  attempts       Int                 @default(0)
+  maxAttempts    Int                 @default(3) @map("max_attempts")
+  nextRetryAt    DateTime            @default(now()) @map("next_retry_at")
+  lastAttemptAt  DateTime?           @map("last_attempt_at")
+  retryDisabled  Boolean             @default(false) @map("retry_disabled")
+  lastError      String?             @map("last_error")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  @@index([status, nextRetryAt])
+  @@index([userId, channel])
+  @@map("notification_outbox")
+}
+
 enum NotificationType {
   CONTRIBUTION
   MILESTONE
@@ -264,6 +291,17 @@ enum NotificationType {
 }
 
 enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum NotificationChannel {
+  EMAIL
+  PUSH
+}
+
+enum DeliveryStatus {
   PENDING
   SENT
   FAILED
@@ -561,4 +599,243 @@ enum IntegrationPlatform {
   CLR_FUND
   GITHUB
   DISCORD
+// Trading Competition Models
+
+model TradingCompetition {
+  id                  String               @id @default(cuid())
+  title               String
+  description         String?
+  type                CompetitionType
+  durationType        DurationType
+  startTime           DateTime             @map("start_time")
+  endTime             DateTime             @map("end_time")
+  status              CompetitionStatus    @default(UPCOMING)
+  prizePool           Decimal              @default(0) @map("prize_pool")
+  maxParticipants     Int?                 @map("max_participants")
+  minDeposit          Decimal              @default(0) @map("min_deposit")
+  requiredKycTier     Int                  @default(0) @map("required_kyc_tier")
+  entryFee            Decimal              @default(0) @map("entry_fee")
+  prizeDistribution   Json                 @map("prize_distribution")
+  rules               Json?
+  createdBy           String               @map("created_by")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  // Relations
+  participants        CompetitionParticipant[]
+  leaderboard         CompetitionLeaderboard[]
+  trades              CompetitionTrade[]
+  achievements         CompetitionAchievement[]
+  antiCheatFlags      AntiCheatFlag[]
+  prizeDistributions  PrizeDistribution[]
+
+  @@map("trading_competitions")
+}
+
+model CompetitionParticipant {
+  id             String     @id @default(cuid())
+  competitionId  String     @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String     @map("user_id")
+  user           User       @relation(fields: [userId], references: [id])
+  status         ParticipantStatus @default(REGISTERED)
+  joinedAt       DateTime   @default(now()) @map("joined_at")
+  initialBalance Decimal    @default(0) @map("initial_balance")
+  finalBalance   Decimal?   @map("final_balance")
+  totalVolume    Decimal    @default(0) @map("total_volume")
+  totalReturn    Decimal    @default(0) @map("total_return")
+  sharpeRatio    Decimal?   @map("sharpe_ratio")
+  maxDrawdown    Decimal    @default(0) @map("max_drawdown")
+  winRate        Decimal    @default(0) @map("win_rate")
+  rank           Int?
+  prizeAmount    Decimal?   @map("prize_amount")
+  disqualified   Boolean    @default(false) @map("disqualified")
+  disqualificationReason String? @map("disqualification_reason")
+  
+  // Relations
+  trades         CompetitionTrade[]
+  
+  @@unique([competitionId, userId])
+  @@map("competition_participants")
+}
+
+model CompetitionTrade {
+  id              String     @id @default(cuid())
+  competitionId   String     @map("competition_id")
+  competition     TradingCompetition @relation(fields: [competitionId], references: [id])
+  participantId   String     @map("participant_id")
+  participant     CompetitionParticipant @relation(fields: [participantId], references: [id])
+  userId          String     @map("user_id")
+  asset           String
+  side            TradeSide
+  quantity        Decimal
+  price           Decimal
+  totalValue      Decimal    @map("total_value")
+  fee             Decimal    @default(0)
+  timestamp       DateTime   @default(now())
+  transactionHash String?    @map("transaction_hash")
+  profitLoss      Decimal?   @map("profit_loss")
+  
+  @@index([competitionId, userId])
+  @@index([participantId])
+  @@index([timestamp])
+  @@map("competition_trades")
+}
+
+model CompetitionLeaderboard {
+  id             String     @id @default(cuid())
+  competitionId  String     @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String     @map("user_id")
+  user           User       @relation(fields: [userId], references: [id])
+  rank           Int
+  score          Decimal
+  totalReturn    Decimal    @map("total_return")
+  totalVolume    Decimal    @map("total_volume")
+  sharpeRatio    Decimal?   @map("sharpe_ratio")
+  maxDrawdown    Decimal    @map("max_drawdown")
+  winRate        Decimal    @map("win_rate")
+  lastUpdated    DateTime   @default(now()) @map("last_updated")
+  
+  @@unique([competitionId, userId])
+  @@index([competitionId, rank])
+  @@map("competition_leaderboard")
+}
+
+model CompetitionAchievement {
+  id            String           @id @default(cuid())
+  competitionId String           @map("competition_id")
+  competition   TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId        String           @map("user_id")
+  user          User             @relation(fields: [userId], references: [id])
+  type          AchievementType
+  title         String
+  description   String
+  icon          String?
+  earnedAt      DateTime         @default(now()) @map("earned_at")
+  shared        Boolean          @default(false)
+  shareUrl      String?          @map("share_url")
+  
+  @@map("competition_achievements")
+}
+
+model AntiCheatFlag {
+  id             String         @id @default(cuid())
+  competitionId  String         @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String         @map("user_id")
+  user           User           @relation(fields: [userId], references: [id])
+  type           FlagType
+  severity       FlagSeverity
+  description    String
+  evidence       Json?
+  status         FlagStatus     @default(PENDING)
+  reviewedBy     String?        @map("reviewed_by")
+  reviewedAt     DateTime?      @map("reviewed_at")
+  action         String?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  
+  @@index([competitionId, userId])
+  @@index([status])
+  @@map("anti_cheat_flags")
+}
+
+model PrizeDistribution {
+  id             String     @id @default(cuid())
+  competitionId  String     @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String     @map("user_id")
+  user           User       @relation(fields: [userId], references: [id])
+  rank           Int
+  prizeAmount    Decimal    @map("prize_amount")
+  currency       String     @default("USD")
+  status         PrizeStatus @default(PENDING)
+  transactionHash String?   @map("transaction_hash")
+  distributedAt  DateTime?  @map("distributed_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  
+  @@index([competitionId, userId])
+  @@index([status])
+  @@map("prize_distributions")
+}
+
+// Enums for Trading Competition
+
+enum CompetitionType {
+  HIGHEST_RETURN
+  MOST_VOLUME
+  BEST_SHARPE
+  HIGHEST_WINS
+  LOWEST_DRAWDOWN
+}
+
+enum DurationType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum CompetitionStatus {
+  UPCOMING
+  ACTIVE
+  FINISHED
+  CANCELLED
+  SUSPENDED
+}
+
+enum ParticipantStatus {
+  REGISTERED
+  ACTIVE
+  FINISHED
+  DISQUALIFIED
+  WITHDRAWN
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum AchievementType {
+  FIRST_PLACE
+  TOP_THREE
+  TOP_TEN
+  HIGHEST_RETURN
+  MOST_VOLUME
+  BEST_RISK_ADJUSTED
+  WIN_STREAK
+  CONSISTENT_PERFORMANCE
+}
+
+enum FlagType {
+  WASH_TRADING
+  SELF_DEALING
+  MANIPULATION
+  BOTS
+  MULTIPLE_ACCOUNTS
+  UNUSUAL_PATTERN
+}
+
+enum FlagSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FlagStatus {
+  PENDING
+  REVIEWING
+  CONFIRMED
+  DISMISSED
+  ACTION_TAKEN
+}
+
+enum PrizeStatus {
+  PENDING
+  APPROVED
+  PAID
+  FAILED
+  CANCELLED
 }
