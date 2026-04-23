@@ -45,6 +45,9 @@ model User {
   antiCheatFlags      AntiCheatFlag[]
   prizeDistributions  PrizeDistribution[]
 
+  // Insurance Relations
+  insurancePolicies    InsurancePolicy[]
+
   @@map("users")
 }
 
@@ -330,6 +333,14 @@ enum RiskType {
   PROJECT_FAILURE
   SMART_CONTRACT_EXPLOIT
   MARKET_VOLATILITY
+  PARAMETRIC_WEATHER
+}
+
+enum PolicyStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  CLAIMED
 }
 
 enum ClaimStatus {
@@ -342,11 +353,17 @@ enum ClaimStatus {
 model InsurancePolicy {
   id             String    @id @default(cuid())
   userId         String    @map("user_id")
+  user           User      @relation(fields: [userId], references: [id])
   poolId         String    @map("pool_id")
+  pool           InsurancePool @relation(fields: [poolId], references: [id])
   riskType       RiskType  @map("risk_type")
   premium        Decimal   @map("premium")
   coverageAmount Decimal   @map("coverage_amount")
+  status         PolicyStatus @default(ACTIVE)
   createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  claims         Claim[]
 
   @@map("insurance_policies")
 }
@@ -357,6 +374,11 @@ model InsurancePool {
   capital       Decimal  @default(0)
   lockedCapital Decimal  @default(0) @map("locked_capital")
   createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  insurancePolicies    InsurancePolicy[]
+  reinsuranceContracts ReinsuranceContract[]
+  claims               Claim[]
 
   @@map("insurance_pools")
 }
@@ -364,6 +386,9 @@ model InsurancePool {
 model Claim {
   id           String      @id @default(cuid())
   policyId     String      @map("policy_id")
+  policy       InsurancePolicy @relation(fields: [policyId], references: [id])
+  poolId       String?     @map("pool_id")
+  pool         InsurancePool? @relation(fields: [poolId], references: [id])
   claimAmount  Decimal     @map("claim_amount")
   status       ClaimStatus @default(PENDING)
   payoutAmount Decimal?    @map("payout_amount")
@@ -375,6 +400,7 @@ model Claim {
 model ReinsuranceContract {
   id             String   @id @default(cuid())
   poolId         String   @map("pool_id")
+  pool           InsurancePool @relation(fields: [poolId], references: [id])
   coverageLimit  Decimal  @map("coverage_limit")
   premiumRate    Decimal  @map("premium_rate")
   createdAt      DateTime @default(now()) @map("created_at")
@@ -430,45 +456,6 @@ model Auction {
   endTime           DateTime          @map("end_time")
   status            AuctionStatus     @default(ACTIVE)
   winningBidId      String?           @map("winning_bid_id")
-// Regenerative Finance Models
-
-model FundingRound {
-  id                String            @id @default(cuid())
-  title             String
-  description       String?
-  type              FundingRoundType  @default(QUADRATIC)
-  status            FundingRoundStatus @default(UPCOMING)
-  startTime         DateTime          @map("start_time")
-  endTime           DateTime          @map("end_time")
-  matchingPool      BigInt            @default(0) @map("matching_pool")
-  totalContributions BigInt           @default(0) @map("total_contributions")
-  totalMatched      BigInt            @default(0) @map("total_matched")
-  metadata          Json?             @map("metadata")
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
-
-  // Relations
-  projects          FundingRoundProject[]
-  contributions      QuadraticContribution[]
-  impactCertificates ImpactCertificate[]
-  poolAllocations   PoolAllocation[]
-
-  @@map("funding_rounds")
-}
-
-model PublicGoodsProject {
-  id                String            @id @default(cuid())
-  projectId         String?           @unique @map("project_id")
-  project           Project?          @relation(fields: [projectId], references: [id])
-  title             String
-  description       String
-  category          String
-  walletAddress     String            @map("wallet_address")
-  impactMetrics     Json?             @map("impact_metrics")
-  verificationData  Json?             @map("verification_data")
-  status            ProjectStatus      @default(ACTIVE)
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
 
   // Relations
   bids              Bid[]
@@ -592,6 +579,49 @@ enum AccountingProvider {
   XERO
   FRESHBOOKS
   WAVE
+}
+
+// Regenerative Finance Models
+
+model FundingRound {
+  id                String            @id @default(cuid())
+  title             String
+  description       String?
+  type              FundingRoundType  @default(QUADRATIC)
+  status            FundingRoundStatus @default(UPCOMING)
+  startTime         DateTime          @map("start_time")
+  endTime           DateTime          @map("end_time")
+  matchingPool      BigInt            @default(0) @map("matching_pool")
+  totalContributions BigInt           @default(0) @map("total_contributions")
+  totalMatched      BigInt            @default(0) @map("total_matched")
+  metadata          Json?             @map("metadata")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  projects          FundingRoundProject[]
+  contributions      QuadraticContribution[]
+  impactCertificates ImpactCertificate[]
+  poolAllocations   PoolAllocation[]
+
+  @@map("funding_rounds")
+}
+
+model PublicGoodsProject {
+  id                String            @id @id @default(cuid())
+  projectId         String?           @unique @map("project_id")
+  project           Project?          @relation(fields: [projectId], references: [id])
+  title             String
+  description       String
+  category          String
+  walletAddress     String            @map("wallet_address")
+  impactMetrics     Json?             @map("impact_metrics")
+  verificationData  Json?             @map("verification_data")
+  status            ProjectStatus      @default(ACTIVE)
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  // Relations
   roundProjects     FundingRoundProject[]
   contributions     QuadraticContribution[]
   impactCertificates ImpactCertificate[]
@@ -737,8 +767,6 @@ model IntegrationConfig {
   @@map("integration_configs")
 }
 
-// Enums for Regenerative Finance
-
 enum FundingRoundType {
   QUADRATIC
   RETROACTIVE
@@ -785,6 +813,8 @@ enum IntegrationPlatform {
   CLR_FUND
   GITHUB
   DISCORD
+}
+
 // Trading Competition Models
 
 model TradingCompetition {
@@ -880,7 +910,7 @@ model CompetitionLeaderboard {
   totalVolume    Decimal    @map("total_volume")
   sharpeRatio    Decimal?   @map("sharpe_ratio")
   maxDrawdown    Decimal    @map("max_drawdown")
-  winRate        Decimal    @map("win_rate")
+  winRate        Decimal    @default(0) @map("win_rate")
   lastUpdated    DateTime   @default(now()) @map("last_updated")
   
   @@unique([competitionId, userId])
@@ -944,8 +974,6 @@ model PrizeDistribution {
   @@index([status])
   @@map("prize_distributions")
 }
-
-// Enums for Trading Competition
 
 enum CompetitionType {
   HIGHEST_RETURN

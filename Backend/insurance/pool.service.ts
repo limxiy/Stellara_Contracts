@@ -9,8 +9,8 @@ export class PoolService {
     const pool = await this.prisma.insurancePool.create({
       data: {
         name,
-        capital: initialCapital.toString(),
-        lockedCapital: '0',
+        capital: initialCapital,
+        lockedCapital: 0,
       },
     });
 
@@ -29,7 +29,7 @@ export class PoolService {
     const updatedPool = await this.prisma.insurancePool.update({
       where: { id: poolId },
       data: {
-        capital: (parseFloat(pool.capital.toString()) + amount).toString(),
+        capital: { increment: amount },
       },
     });
 
@@ -48,7 +48,7 @@ export class PoolService {
     const updatedPool = await this.prisma.insurancePool.update({
       where: { id: poolId },
       data: {
-        lockedCapital: (parseFloat(pool.lockedCapital.toString()) + amount).toString(),
+        lockedCapital: { increment: amount },
       },
     });
 
@@ -58,6 +58,7 @@ export class PoolService {
   async getPoolById(poolId: string) {
     return this.prisma.insurancePool.findUnique({
       where: { id: poolId },
+      include: { insurancePolicies: true, claims: true },
     });
   }
 
