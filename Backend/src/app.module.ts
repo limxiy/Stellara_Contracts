@@ -52,7 +52,7 @@ import { V2Module } from './modules/v2/v2.module';
     V2Module,
   ],
   controllers: [AppController],
-  providers: [AppService, AppLogger],
+  providers: [AppService, AppLogger, ApiVersionMiddleware],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
