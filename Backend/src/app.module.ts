@@ -22,6 +22,8 @@ import { AppLogger } from './common/logger/app.logger';
 import { AppCacheModule } from './cache/cache.module';
 import { V1Module } from './modules/v1/v1.module';
 import { V2Module } from './modules/v2/v2.module';
+import { NonceModule } from './nonce/nonce.module';
+import { SanitizationMiddleware } from './common/middleware/sanitization.middleware';
 
 @Module({
   imports: [
@@ -55,6 +57,7 @@ import { V2Module } from './modules/v2/v2.module';
     AppCacheModule,
     V1Module,
     V2Module,
+    NonceModule,
   ],
   controllers: [AppController],
   providers: [AppService, AppLogger, ApiVersionMiddleware, TimeoutMiddleware],
@@ -62,7 +65,7 @@ import { V2Module } from './modules/v2/v2.module';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer
-      .apply(CorrelationIdMiddleware, LoggingMiddleware, ApiVersionMiddleware, TimeoutMiddleware)
+      .apply(CorrelationIdMiddleware, LoggingMiddleware, ApiVersionMiddleware, TimeoutMiddleware, SanitizationMiddleware)
       .forRoutes('*');
   }
 }

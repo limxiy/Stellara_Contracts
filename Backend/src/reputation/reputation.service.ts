@@ -36,11 +36,27 @@ export class ReputationService {
    * This is a simpler, rule-based score for creators.
    */
   async updateTrustScore(userId: string): Promise<number> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { trustScore: true },
+    });
+
+    const previousScore = user?.trustScore ?? 0;
     const score = await calculateTrustScore(this.prisma, userId);
+
     await this.prisma.user.update({
       where: { id: userId },
       data: { trustScore: score },
     });
+
+    await this.prisma.reputationHistory.create({
+      data: {
+        userId,
+        scoreChange: score - previousScore,
+        reason: 'TRUST_SCORE_RECALCULATION',
+      },
+    });
+
     return score;
   }
 
