@@ -32,6 +32,12 @@ model User {
   reputationBreakdown  ReputationScore?
   notificationSettings NotificationSetting?
   notifications        Notification[]
+  
+  // Invoice Factoring Relations
+  soldInvoices         Invoice[]            @relation("InvoiceSeller")
+  bids                 Bid[]                @relation("BidInvestor")
+  defaultClaims        DefaultClaim[]       @relation("DefaultClaimant")
+  accountingIntegration AccountingIntegration? @relation("AccountingUser")
 
   @@map("users")
 }
@@ -324,4 +330,179 @@ model ReinsuranceContract {
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@map("reinsurance_contracts")
+}
+
+// Invoice Factoring Marketplace Models
+
+model Invoice {
+  id                String           @id @default(cuid())
+  sellerId          String           @map("seller_id")
+  seller            User             @relation("InvoiceSeller", fields: [sellerId], references: [id])
+  invoiceNumber     String           @map("invoice_number")
+  buyerName         String           @map("buyer_name")
+  buyerEmail        String?          @map("buyer_email")
+  buyerAddress      String?          @map("buyer_address")
+  amount            Decimal          @db.Decimal(18, 2)
+  currency          String           @default("USD")
+  issueDate         DateTime         @map("issue_date")
+  dueDate           DateTime         @map("due_date")
+  description       String?
+  pdfUrl            String?          @map("pdf_url")
+  ocrData           Json?            @map("ocr_data")
+  verificationToken String           @unique @map("verification_token")
+  isVerified        Boolean          @default(false) @map("is_verified")
+  verifiedAt        DateTime?        @map("verified_at")
+  verifiedBy        String?          @map("verified_by")
+  status            InvoiceStatus    @default(DRAFT)
+  auctionId         String?          @map("auction_id")
+  auction           Auction?         @relation("InvoiceAuction")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  bids               Bid[]
+  payments           Payment[]
+  defaultClaims      DefaultClaim[]
+
+  @@map("invoices")
+}
+
+model Auction {
+  id                String            @id @default(cuid())
+  invoiceId         String            @unique @map("invoice_id")
+  invoice           Invoice           @relation("InvoiceAuction", fields: [invoiceId], references: [id])
+  startAmount       Decimal           @map("start_amount") @db.Decimal(18, 2)
+  currentBestBid    Decimal?          @map("current_best_bid") @db.Decimal(5, 4)
+  currentBestBidder String?           @map("current_best_bidder")
+  minAdvanceRate    Decimal           @default(80) @map("min_advance_rate") @db.Decimal(5, 2)
+  maxAdvanceRate    Decimal           @default(95) @map("max_advance_rate") @db.Decimal(5, 2)
+  startTime         DateTime          @map("start_time")
+  endTime           DateTime          @map("end_time")
+  status            AuctionStatus     @default(ACTIVE)
+  winningBidId      String?           @map("winning_bid_id")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  bids              Bid[]
+
+  @@map("auctions")
+}
+
+model Bid {
+  id                String           @id @default(cuid())
+  auctionId         String           @map("auction_id")
+  auction           Auction          @relation(fields: [auctionId], references: [id])
+  invoiceId         String           @map("invoice_id")
+  invoice           Invoice          @relation(fields: [invoiceId], references: [id])
+  investorId        String           @map("investor_id")
+  investor          User             @relation("BidInvestor", fields: [investorId], references: [id])
+  advanceRate       Decimal          @map("advance_rate") @db.Decimal(5, 2)
+  discountRate      Decimal          @map("discount_rate") @db.Decimal(5, 4)
+  advanceAmount     Decimal          @map("advance_amount") @db.Decimal(18, 2)
+  expectedReturn    Decimal          @map("expected_return") @db.Decimal(18, 2)
+  isWinning         Boolean          @default(false) @map("is_winning")
+  createdAt         DateTime         @default(now()) @map("created_at")
+
+  @@map("bids")
+}
+
+model Payment {
+  id                String           @id @default(cuid())
+  invoiceId         String           @map("invoice_id")
+  invoice           Invoice          @relation(fields: [invoiceId], references: [id])
+  type              PaymentType
+  amount            Decimal          @db.Decimal(18, 2)
+  currency          String           @default("USD")
+  transactionHash   String?          @unique @map("transaction_hash")
+  status            PaymentStatus    @default(PENDING)
+  processedAt       DateTime?        @map("processed_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  @@map("payments")
+}
+
+model DefaultClaim {
+  id                String           @id @default(cuid())
+  invoiceId         String           @map("invoice_id")
+  invoice           Invoice          @relation(fields: [invoiceId], references: [id])
+  claimantId        String           @map("claimant_id")
+  claimant          User             @relation("DefaultClaimant", fields: [claimantId], references: [id])
+  claimAmount       Decimal          @map("claim_amount") @db.Decimal(18, 2)
+  reason            String
+  status            ClaimStatus      @default(PENDING)
+  payoutAmount      Decimal?         @map("payout_amount") @db.Decimal(18, 2)
+  processedAt       DateTime?        @map("processed_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  @@map("default_claims")
+}
+
+model InvoiceInsurancePool {
+  id                String           @id @default(cuid())
+  name              String
+  totalCapital      Decimal          @default(0) @map("total_capital") @db.Decimal(18, 2)
+  lockedCapital     Decimal          @default(0) @map("locked_capital") @db.Decimal(18, 2)
+  premiumRate       Decimal          @default(0.01) @map("premium_rate") @db.Decimal(6, 6)
+  coveragePercentage Decimal         @default(100) @map("coverage_percentage") @db.Decimal(5, 2)
+  isActive          Boolean          @default(true) @map("is_active")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  @@map("invoice_insurance_pools")
+}
+
+model AccountingIntegration {
+  id                String           @id @default(cuid())
+  userId            String           @unique @map("user_id")
+  user              User             @relation("AccountingUser", fields: [userId], references: [id])
+  provider          AccountingProvider
+  apiKey            String           @map("api_key")
+  companyId         String           @map("company_id")
+  isActive          Boolean          @default(true) @map("is_active")
+  lastSyncAt        DateTime?        @map("last_sync_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  @@map("accounting_integrations")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING_VERIFICATION
+  VERIFIED
+  IN_AUCTION
+  FUNDED
+  COMPLETED
+  DEFAULTED
+  CANCELLED
+}
+
+enum AuctionStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+enum PaymentType {
+  ADVANCE
+  FULL_PAYMENT
+  INSURANCE_PAYOUT
+  CLAIM_PAYMENT
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum AccountingProvider {
+  QUICKBOOKS
+  XERO
+  FRESHBOOKS
+  WAVE
 }
