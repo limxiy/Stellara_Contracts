@@ -4,7 +4,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { UserModule } from './user/user.module';
 import { validateEnv } from './config/env.validation';
 import { ReputationModule } from './reputation/reputation.module';
 import { DatabaseModule } from './database.module';
@@ -15,8 +14,11 @@ import { StorageModule } from './storage/storage.module';
 import { CompetitionModule } from './competition/competition.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
+import { ApiVersionMiddleware } from './common/middleware/api-version.middleware';
 import { AppLogger } from './common/logger/app.logger';
 import { AppCacheModule } from './cache/cache.module';
+import { V1Module } from './modules/v1/v1.module';
+import { V2Module } from './modules/v2/v2.module';
 
 @Module({
   imports: [
@@ -46,7 +48,8 @@ import { AppCacheModule } from './cache/cache.module';
     StorageModule,
     CompetitionModule,
     AppCacheModule,
-    UserModule,
+    V1Module,
+    V2Module,
   ],
   controllers: [AppController],
   providers: [AppService, AppLogger],
@@ -54,7 +57,7 @@ import { AppCacheModule } from './cache/cache.module';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer
-      .apply(CorrelationIdMiddleware, LoggingMiddleware)
+      .apply(CorrelationIdMiddleware, LoggingMiddleware, ApiVersionMiddleware)
       .forRoutes('*');
   }
 }

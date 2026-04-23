@@ -24,6 +24,14 @@ class EnvironmentVariables {
   @IsString()
   API_PREFIX: string;
 
+  @IsOptional()
+  @IsString()
+  DEFAULT_API_VERSION?: string;
+
+  @IsOptional()
+  @IsString()
+  API_VERSION_SUNSET?: string;
+
   @IsString()
   DATABASE_URL: string;
 

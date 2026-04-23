@@ -20,8 +20,9 @@ async function bootstrap() {
     }),
   );
 
-  // API prefix
-  const apiPrefix = configService.get<string>('API_PREFIX', 'api/v1');
+  // API prefix and version normalization
+  const rawPrefix = configService.get<string>('API_PREFIX', 'api');
+  const apiPrefix = rawPrefix.replace(/\/?v[0-9]+$/, '').replace(/^\/|\/$/g, '') || 'api';
   app.setGlobalPrefix(apiPrefix);
 
   // CORS
