@@ -8,6 +8,7 @@ members = [
     "contracts/synthetic-assets",
 
     "contracts/tcr",
+    "contracts/cross-chain-router",
     "integration-tests",
     "shared",
 ]

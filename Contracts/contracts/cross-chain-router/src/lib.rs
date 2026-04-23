@@ -1,5 +1,6 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Env, Symbol, Vec, BytesN, Address};
+pub mod bridge;
+use soroban_sdk::{contract, contractimpl, contracttype, Env, Symbol, Vec, BytesN, Address, Bytes};
 
 #[contract]
 pub struct CrossChainRouter;
@@ -12,7 +13,7 @@ pub struct Message {
     pub dest_chain: u32,
     pub sender: Address,
     pub recipient: Address,
-    pub payload: Vec<u8>,
+    pub payload: Bytes,
     pub nonce: u64,
     pub status: u32, // 0=INITIATED, 1=LOCKED, 2=VERIFIED, 3=RELEASED
 }
@@ -43,7 +44,7 @@ impl CrossChainRouter {
         dest_chain: u32,
         sender: Address,
         recipient: Address,
-        payload: Vec<u8>,
+        payload: Bytes,
     ) -> BytesN<32> {
         sender.require_auth();
 
@@ -83,8 +84,8 @@ impl CrossChainRouter {
     pub fn verify_message(
         env: Env,
         message_id: BytesN<32>,
-        header: LightClientHeader,
-        proof: Vec<u8>,
+        _header: LightClientHeader,
+        proof: Bytes,
     ) -> bool {
         // Get light client data for destination chain
         let light_client: LightClientHeader = env
@@ -111,9 +112,12 @@ impl CrossChainRouter {
                 .get(&Symbol::new(&env, "messages"))
                 .unwrap();
 
-            for msg in messages.iter_mut() {
+            for i in 0..messages.len() {
+                let mut msg = messages.get_unchecked(i);
                 if msg.id == message_id {
                     msg.status = 2; // VERIFIED
+                    messages.set(i, msg);
+                    break;
                 }
             }
 
@@ -184,7 +188,8 @@ impl CrossChainRouter {
 
         let mut slash_amount: i128 = 0;
 
-        for validator in validators.iter_mut() {
+        for i in 0..validators.len() {
+            let mut validator = validators.get_unchecked(i);
             if validator.address == validator_address {
                 slash_amount = (validator.staked_amount * slash_percentage as i128) / 100;
                 validator.staked_amount -= slash_amount;
@@ -193,6 +198,7 @@ impl CrossChainRouter {
                     validator.status = 2; // SLASHED
                 }
 
+                validators.set(i, validator);
                 break;
             }
         }
@@ -260,13 +266,39 @@ impl CrossChainRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::Env;
+    use soroban_sdk::{Env, testutils::Address as _, Address};
 
     #[test]
     fn test_initiate_message() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, CrossChainRouter);
+        let client = CrossChainRouterClient::new(&env, &contract_id);
 
-        // Test accepts without panicking
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let payload = Bytes::from_array(&env, &[1, 2, 3]);
+
+        client.initiate_message(&0, &1, &sender, &recipient, &payload);
+    }
+
+    #[test]
+    fn test_bridge_deposit() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, bridge::StellaraBridge);
+        let client = bridge::StellaraBridgeClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let fee_collector = Address::generate(&env);
+        client.initialize(&admin, &fee_collector, &1, &1);
+
+        let from = Address::generate(&env);
+        let asset = Address::generate(&env);
+        let amount = 1000i128;
+        let dest_chain = 2u32;
+        let recipient = Address::generate(&env);
+
+        client.deposit(&from, &asset, &amount, &dest_chain, &recipient);
     }
 }

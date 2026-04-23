@@ -196,6 +196,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cross-chain-router"
+version = "0.1.0"
+dependencies = [
+ "shared",
+ "soroban-sdk",
+ "soroban-spec",
+]
+
+[[package]]
 name = "crypto-bigint"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
