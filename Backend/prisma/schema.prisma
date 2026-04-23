@@ -48,6 +48,10 @@ model User {
   // Insurance Relations
   insurancePolicies    InsurancePolicy[]
 
+  // Snapshot Relations
+  userSnapshots        ReputationUserSnapshot[]
+  reputationTrends     ReputationTrend[]
+
   @@map("users")
 }
 
@@ -1122,4 +1126,159 @@ enum PrizeStatus {
   PAID
   FAILED
   CANCELLED
+}
+
+// Reputation Snapshot Models
+
+model ReputationSnapshot {
+  id                  String   @id @default(cuid())
+  period              SnapshotPeriod @map("period")
+  periodStart         DateTime @map("period_start")
+  periodEnd           DateTime @map("period_end")
+  totalUsers          Int      @map("total_users")
+  activeUsers         Int      @map("active_users")
+  averageScore        Float    @map("average_score")
+  medianScore         Float    @map("median_score")
+  highestScore        Int      @map("highest_score")
+  lowestScore         Int      @map("lowest_score")
+  scoreDistribution   Json     @map("score_distribution") // Distribution by score ranges
+  levelDistribution   Json     @map("level_distribution") // Distribution by reputation levels
+  totalActivities     Int      @map("total_activities")
+  newUsers            Int      @map("new_users")
+  decayedUsers        Int      @map("decayed_users")
+  decayedAmount       Float    @map("decayed_amount")
+  metadata            Json?    @map("metadata")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Relations
+  userSnapshots        ReputationUserSnapshot[]
+  comparisonsAsFirst   SnapshotComparison[] @relation("ComparisonSnapshot1")
+  comparisonsAsSecond  SnapshotComparison[] @relation("ComparisonSnapshot2")
+
+  @@unique([period, periodStart])
+  @@index([period])
+  @@index([periodStart])
+  @@map("reputation_snapshots")
+}
+
+model ReputationUserSnapshot {
+  id                  String   @id @default(cuid())
+  snapshotId          String   @map("snapshot_id")
+  snapshot            ReputationSnapshot @relation(fields: [snapshotId], references: [id])
+  userId              String   @map("user_id")
+  user                User     @relation(fields: [userId], references: [id])
+  reputationScore     Int      @map("reputation_score")
+  trustScore          Int      @map("trust_score")
+  reputationLevel     String   @map("reputation_level")
+  activityCount       Int      @map("activity_count")
+  successRate         Float    @map("success_rate")
+  reliabilityScore    Float    @map("reliability_score")
+  communityScore      Float    @map("community_score")
+  expertiseScore      Float    @map("expertise_score")
+  contributionSize    Float    @map("contribution_size")
+  peerRatingScore     Float    @map("peer_rating_score")
+  communityFeedbackScore Float @map("community_feedback_score")
+  compositeScore      Float    @map("composite_score")
+  rank                Int?     @map("rank") // Global ranking at snapshot time
+  percentile          Float?   @map("percentile") // Percentile at snapshot time
+  changeFromPrevious  Json?    @map("change_from_previous") // Changes from previous snapshot
+  metadata            Json?    @map("metadata")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([snapshotId, userId])
+  @@index([snapshotId])
+  @@index([userId])
+  @@index([reputationScore])
+  @@map("reputation_user_snapshots")
+}
+
+model ReputationTrend {
+  id                  String   @id @default(cuid())
+  userId              String   @map("user_id")
+  user                User     @relation(fields: [userId], references: [id])
+  trendType           TrendType @map("trend_type")
+  period              TrendPeriod @map("period")
+  startDate           DateTime @map("start_date")
+  endDate             DateTime @map("end_date")
+  startScore          Int      @map("start_score")
+  endScore            Int      @map("end_score")
+  scoreChange         Int      @map("score_change")
+  percentChange       Float    @map("percent_change")
+  averageDailyChange  Float    @map("average_daily_change")
+  volatility          Float    @map("volatility") // Standard deviation of daily changes
+  trendDirection      TrendDirection @map("trend_direction")
+  momentum            Float    @map("momentum") // Rate of change acceleration
+  predictionScore     Int?     @map("prediction_score") // Predicted score for next period
+  confidence          Float    @map("confidence") // Confidence in prediction (0-1)
+  factors             Json?    @map("factors") // Contributing factors to trend
+  metadata            Json?    @map("metadata")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, trendType, period, startDate])
+  @@index([userId, trendType])
+  @@index([period])
+  @@index([trendDirection])
+  @@map("reputation_trends")
+}
+
+model SnapshotComparison {
+  id                  String   @id @default(cuid())
+  snapshotId1         String   @map("snapshot_id_1")
+  snapshot1           ReputationSnapshot @relation("ComparisonSnapshot1", fields: [snapshotId1], references: [id])
+  snapshotId2         String   @map("snapshot_id_2")
+  snapshot2           ReputationSnapshot @relation("ComparisonSnapshot2", fields: [snapshotId2], references: [id])
+  comparisonType      ComparisonType @map("comparison_type")
+  metrics             Json     @map("metrics") // Detailed comparison metrics
+  insights            Json?    @map("insights") // AI-generated insights
+  significantChanges  Json     @map("significant_changes") // Notable changes
+  recommendations     Json?    @map("recommendations") // Actionable recommendations
+  similarityScore     Float    @map("similarity_score") // Overall similarity (0-1)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([snapshotId1, snapshotId2, comparisonType])
+  @@index([snapshotId1])
+  @@index([snapshotId2])
+  @@map("snapshot_comparisons")
+}
+
+enum SnapshotPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum TrendType {
+  SCORE_TREND
+  ACTIVITY_TREND
+  RANK_TREND
+  LEVEL_TREND
+  DECAY_TREND
+  GROWTH_TREND
+}
+
+enum TrendPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum TrendDirection {
+  STRONGLY_DECLINING
+  DECLINING
+  STABLE
+  INCREASING
+  STRONGLY_INCREASING
+}
+
+enum ComparisonType {
+  PERIOD_OVER_PERIOD
+  YEAR_OVER_YEAR
+  MONTH_OVER_MONTH
+  WEEK_OVER_WEEK
+  CUSTOM
 }
