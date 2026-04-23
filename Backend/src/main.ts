@@ -14,8 +14,6 @@ import { TenantQuotaMiddleware } from './quota/tenant-quota.middleware';
 import { UserThrottlerGuard } from './common/guards/user-throttler.guard';
 import { ValidationPipe } from '@nestjs/common';
 import { inputSanitizationMiddleware } from './security/sanitization/input-sanitization.middleware';
-import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
-import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 
 async function bootstrap() {
   // Create app with buffer logs to ensure we can use our custom logger
@@ -80,10 +78,7 @@ async function bootstrap() {
 
   // Global audit interceptor for comprehensive action logging
   const auditInterceptor = app.get(AuditInterceptor);
-  app.useGlobalInterceptors(auditInterceptor, new ApiResponseInterceptor());
-
-  // Global exception filter
-  app.useGlobalFilters(new GlobalExceptionFilter());
+  app.useGlobalInterceptors(auditInterceptor);
 
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port);

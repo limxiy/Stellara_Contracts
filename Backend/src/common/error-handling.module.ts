@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
-import { GlobalExceptionFilter } from './exceptions/global-exception.filter';
+import { GlobalExceptionFilter } from './filters/global-exception.filter';
 import { ValidationFilter } from './filters/validation.filter';
-import { ErrorResponseInterceptor } from './interceptors/error-response.interceptor';
+import { ApiResponseInterceptor } from './interceptors/api-response.interceptor';
 
 @Module({
   providers: [
@@ -16,9 +16,9 @@ import { ErrorResponseInterceptor } from './interceptors/error-response.intercep
     },
     {
       provide: APP_INTERCEPTOR,
-      useClass: ErrorResponseInterceptor,
+      useClass: ApiResponseInterceptor,
     },
   ],
-  exports: [GlobalExceptionFilter, ValidationFilter, ErrorResponseInterceptor],
+  exports: [GlobalExceptionFilter, ValidationFilter, ApiResponseInterceptor],
 })
 export class ErrorHandlingModule {}
