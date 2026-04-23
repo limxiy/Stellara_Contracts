@@ -21,6 +21,10 @@ export class MetricsService {
     @InjectMetric('cache_hits_total')          private readonly cacheHits: Counter<string>,
     @InjectMetric('cache_misses_total')        private readonly cacheMisses: Counter<string>,
     @InjectMetric('db_query_duration_seconds') private readonly dbDuration: Histogram<string>,
+    @InjectMetric('rpc_requests_total')        private readonly rpcRequests: Counter<string>,
+    @InjectMetric('rpc_request_duration_seconds') private readonly rpcDuration: Histogram<string>,
+    @InjectMetric('rpc_errors_total')          private readonly rpcErrors: Counter<string>,
+    @InjectMetric('rpc_circuit_breaker_state') private readonly rpcCircuitState: Gauge<string>,
   ) {}
 
   // HTTP
@@ -72,5 +76,22 @@ export class MetricsService {
   // DB
   recordDbQuery(operation: string, durationSec: number) {
     this.dbDuration.observe({ operation }, durationSec);
+  }
+
+  // RPC
+  recordRpcRequest(method: string, status: 'success' | 'error', durationSec?: number) {
+    this.rpcRequests.inc({ method, status });
+    if (durationSec !== undefined) {
+      this.rpcDuration.observe({ method }, durationSec);
+    }
+  }
+
+  recordRpcError(errorType: string) {
+    this.rpcErrors.inc({ error_type: errorType });
+  }
+
+  setRpcCircuitBreakerState(state: 'closed' | 'open' | 'half-open') {
+    const stateValue = state === 'closed' ? 0 : state === 'open' ? 1 : 2;
+    this.rpcCircuitState.set(stateValue);
   }
 }

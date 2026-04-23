@@ -2,7 +2,12 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import { SorobanRpc } from '@stellar/stellar-sdk';
+import * as CircuitBreaker from 'opossum';
 import { PrismaService } from '../../prisma.service';
+import { LedgerTrackerService } from './ledger-tracker.service';
+import { EventHandlerService } from './event-handler.service';
+import { MetricsService } from '../../metrics/metrics.service';
+import { NotificationService } from '../../notification/services/notification.service';
 import { LedgerTrackerService } from './ledger-tracker.service';
 import { EventHandlerService } from './event-handler.service';
 import { SorobanEvent, ParsedContractEvent, ContractEventType } from '../types/event-types';
@@ -26,27 +31,59 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
   private isRunning = false;
   private isShuttingDown = false;
 
+  // RPC endpoints for failover
+  private rpcEndpoints: string[];
+  private currentRpcIndex = 0;
+
+  // Circuit breaker for RPC calls
+  private rpcCircuitBreaker: CircuitBreaker;
+  private readonly circuitBreakerOptions = {
+    timeout: 30000, // 30 seconds
+    errorThresholdPercentage: 50, // Open circuit after 50% failure rate
+    resetTimeout: 30000, // Half-open after 30 seconds
+    rollingCountTimeout: 10000, // Rolling window of 10 seconds
+    rollingCountBuckets: 10,
+    name: 'rpc-circuit-breaker',
+    errorFilter: (error: Error) => {
+      // Don't count rate limit errors as failures for circuit breaker
+      return !error.message.includes('rate limit') && !error.message.includes('429');
+    },
+  };
+
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly ledgerTracker: LedgerTrackerService,
     private readonly eventHandler: EventHandlerService,
+    private readonly metricsService: MetricsService,
+    private readonly notificationService: NotificationService,
   ) {
     // Initialize configuration
     this.network = this.configService.get<string>('STELLAR_NETWORK', 'testnet');
-    const rpcUrl = this.configService.get<string>(
+    const primaryRpcUrl = this.configService.get<string>(
       'STELLAR_RPC_URL',
       'https://soroban-testnet.stellar.org',
     );
+
+    // Initialize RPC endpoints with failover
+    this.rpcEndpoints = this.configService.get<string[]>('STELLAR_RPC_ENDPOINTS', [primaryRpcUrl]);
+    if (!this.rpcEndpoints.includes(primaryRpcUrl)) {
+      this.rpcEndpoints.unshift(primaryRpcUrl); // Primary first
+    }
+
     this.pollIntervalMs = this.configService.get<number>('INDEXER_POLL_INTERVAL_MS', 5000);
     this.maxEventsPerFetch = this.configService.get<number>('INDEXER_MAX_EVENTS_PER_FETCH', 100);
     this.retryAttempts = this.configService.get<number>('INDEXER_RETRY_ATTEMPTS', 3);
     this.retryDelayMs = this.configService.get<number>('INDEXER_RETRY_DELAY_MS', 1000);
 
-    // Initialize RPC client
-    this.rpc = new SorobanRpc.Server(rpcUrl, {
-      allowHttp: rpcUrl.startsWith('http://'),
+    // Initialize RPC client with primary endpoint
+    this.rpc = new SorobanRpc.Server(this.rpcEndpoints[0], {
+      allowHttp: this.rpcEndpoints[0].startsWith('http://'),
     });
+
+    // Initialize circuit breaker for RPC calls
+    this.rpcCircuitBreaker = new CircuitBreaker(this.fetchEvents.bind(this), this.circuitBreakerOptions);
+    this.setupCircuitBreakerEvents();
 
     // Get contract IDs to monitor
     this.contractIds = this.getContractIds();
@@ -81,6 +118,90 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
     if (reputation) contracts.push(reputation);
 
     return contracts;
+  }
+
+  /**
+   * Setup circuit breaker event handlers
+   */
+  private setupCircuitBreakerEvents(): void {
+    this.rpcCircuitBreaker.on('open', () => {
+      this.logger.error('RPC Circuit Breaker OPENED - RPC calls will fail fast');
+      this.metricsService.setRpcCircuitBreakerState('open');
+      // TODO: Send alert notification to operators
+      this.sendAlert('RPC Circuit Breaker Opened', 'RPC calls are failing fast due to repeated errors');
+    });
+
+    this.rpcCircuitBreaker.on('halfOpen', () => {
+      this.logger.warn('RPC Circuit Breaker HALF-OPEN - Testing RPC connectivity');
+      this.metricsService.setRpcCircuitBreakerState('half-open');
+    });
+
+    this.rpcCircuitBreaker.on('close', () => {
+      this.logger.log('RPC Circuit Breaker CLOSED - RPC calls restored');
+      this.metricsService.setRpcCircuitBreakerState('closed');
+      this.sendAlert('RPC Circuit Breaker Closed', 'RPC connectivity restored');
+    });
+
+    this.rpcCircuitBreaker.on('fallback', (result) => {
+      this.logger.warn('RPC Circuit Breaker FALLBACK triggered', result);
+    });
+
+    this.rpcCircuitBreaker.on('timeout', () => {
+      this.logger.warn('RPC Circuit Breaker TIMEOUT');
+      this.metricsService.recordRpcError('timeout');
+    });
+
+    this.rpcCircuitBreaker.on('success', (result) => {
+      this.metricsService.recordRpcRequest('getEvents', 'success');
+    });
+
+    this.rpcCircuitBreaker.on('failure', (error) => {
+      this.metricsService.recordRpcRequest('getEvents', 'error');
+      this.metricsService.recordRpcError(error.message.includes('rate limit') ? 'rate_limit' : 'other');
+    });
+  }
+
+  /**
+   * Send alert notification to operators
+   */
+  private async sendAlert(title: string, message: string): Promise<void> {
+    try {
+      // Find admin users or users with alert preferences
+      const alertUsers = await this.prisma.user.findMany({
+        where: {
+          notificationSettings: {
+            emailEnabled: true,
+            // Add more conditions for alert preferences if needed
+          },
+        },
+        select: { id: true },
+      });
+
+      for (const user of alertUsers) {
+        await this.notificationService.notify(
+          user.id,
+          'SYSTEM_ALERT',
+          title,
+          message,
+          { alertType: 'rpc_failure' }
+        );
+      }
+    } catch (error) {
+      this.logger.error(`Failed to send alert notification: ${error.message}`);
+    }
+  }
+
+  /**
+   * Rotate to next RPC endpoint for failover
+   */
+  private rotateRpcEndpoint(): void {
+    this.currentRpcIndex = (this.currentRpcIndex + 1) % this.rpcEndpoints.length;
+    const newRpcUrl = this.rpcEndpoints[this.currentRpcIndex];
+
+    this.logger.warn(`Switching RPC endpoint to: ${newRpcUrl}`);
+    this.rpc = new SorobanRpc.Server(newRpcUrl, {
+      allowHttp: newRpcUrl.startsWith('http://'),
+    });
   }
 
   /**
@@ -216,85 +337,98 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Fetch events from RPC with retry logic
+   * Fetch events from RPC with circuit breaker protection
    */
   private async fetchEventsWithRetry(
     startLedger: number,
     endLedger: number,
   ): Promise<SorobanEvent[]> {
-    let lastError: Error | null = null;
-
-    for (let attempt = 1; attempt <= this.retryAttempts; attempt++) {
-      try {
-        return await this.fetchEvents(startLedger, endLedger);
-      } catch (error) {
-        lastError = error;
-        this.logger.warn(`Fetch attempt ${attempt}/${this.retryAttempts} failed: ${error.message}`);
-
-        if (attempt < this.retryAttempts) {
-          const delay = this.retryDelayMs * Math.pow(2, attempt - 1); // Exponential backoff
-          this.logger.log(`Retrying in ${delay}ms...`);
-          await this.sleep(delay);
-        }
-      }
+    try {
+      // Use circuit breaker to call fetchEvents
+      return await this.rpcCircuitBreaker.fire(startLedger, endLedger);
+    } catch (error) {
+      // Circuit breaker fallback - return empty array to prevent indexer from stopping
+      this.logger.error(`RPC Circuit Breaker failed: ${error.message}`);
+      return [];
     }
-
-    throw new Error(
-      `Failed to fetch events after ${this.retryAttempts} attempts: ${lastError?.message}`,
-    );
   }
 
   /**
-   * Fetch events from Soroban RPC
+   * Fetch events from Soroban RPC with endpoint failover
    */
   private async fetchEvents(startLedger: number, endLedger: number): Promise<SorobanEvent[]> {
+    const startTime = Date.now();
     const events: SorobanEvent[] = [];
     let cursor: string | undefined;
+    let lastError: Error | null = null;
 
-    // Build filters for contract events
-    const filters: SorobanRpc.Api.EventFilter[] = [];
+    // Try each RPC endpoint until one succeeds
+    for (let attempt = 0; attempt < this.rpcEndpoints.length; attempt++) {
+      try {
+        // Build filters for contract events
+        const filters: SorobanRpc.Api.EventFilter[] = [];
 
-    if (this.contractIds.length > 0) {
-      // Add contract ID filters
-      for (const contractId of this.contractIds) {
-        filters.push({
-          type: 'contract',
-          contractIds: [contractId],
-        });
+        if (this.contractIds.length > 0) {
+          // Add contract ID filters
+          for (const contractId of this.contractIds) {
+            filters.push({
+              type: 'contract',
+              contractIds: [contractId],
+            });
+          }
+        } else {
+          // If no contracts specified, fetch all contract events
+          filters.push({
+            type: 'contract',
+          });
+        }
+
+        do {
+          const request = {
+            startLedger,
+            filters,
+            limit: this.maxEventsPerFetch,
+            cursor,
+          };
+
+          const response = await this.rpc.getEvents(request);
+
+          if (response.events) {
+            for (const event of response.events) {
+              events.push(this.transformRpcEvent(event));
+            }
+          }
+
+          cursor = (response as any).cursor;
+
+          // Safety check - don't fetch too many events at once
+          if (events.length >= this.maxEventsPerFetch * 5) {
+            this.logger.warn(`Event fetch limit reached. Processing ${events.length} events.`);
+            break;
+          }
+        } while (cursor);
+
+        // Success - record metrics
+        const duration = (Date.now() - startTime) / 1000;
+        this.metricsService.recordRpcRequest('getEvents', 'success', duration);
+        return events;
+
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(`RPC endpoint ${this.rpcEndpoints[this.currentRpcIndex]} failed: ${error.message}`);
+
+        // Rotate to next endpoint
+        this.rotateRpcEndpoint();
+
+        // Record error metrics
+        this.metricsService.recordRpcError(error.message.includes('rate limit') ? 'rate_limit' : 'endpoint_failure');
       }
-    } else {
-      // If no contracts specified, fetch all contract events
-      filters.push({
-        type: 'contract',
-      });
     }
 
-    do {
-      const request = {
-        startLedger,
-        filters,
-        limit: this.maxEventsPerFetch,
-        cursor,
-      };
-
-      const response = await this.rpc.getEvents(request);
-
-      if (response.events) {
-        for (const event of response.events) {
-          events.push(this.transformRpcEvent(event));
-        }
-      }
-
-      cursor = (response as any).cursor;
-
-      // Safety check - don't fetch too many events at once
-      if (events.length >= this.maxEventsPerFetch * 5) {
-        this.logger.warn(`Event fetch limit reached. Processing ${events.length} events.`);
-        break;
-      }
-    } while (cursor);
-
-    return events;
+    // All endpoints failed
+    const duration = (Date.now() - startTime) / 1000;
+    this.metricsService.recordRpcRequest('getEvents', 'error', duration);
+    throw new Error(`All RPC endpoints failed. Last error: ${lastError?.message}`);
   }
 
   /**

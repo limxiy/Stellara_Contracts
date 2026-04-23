@@ -14,6 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { UserProfileService } from './user-profile.service';
 import { UpdateUserProfileDto } from './dto/user-profile.dto';
+import { UpdateNotificationSettingsDto, CreateNotificationSettingsDto } from './dto/notification-settings.dto';
 
 @Controller('users')
 export class UserProfileController {
@@ -54,6 +55,27 @@ export class UserProfileController {
     // In production: upload file.buffer to S3/IPFS and get back a URL
     const avatarUrl = `https://cdn.example.com/avatars/${id}-${Date.now()}.jpg`;
     return this.userProfileService.updateAvatar(id, avatarUrl);
+  }
+
+  @Get(':id/notification-settings')
+  getNotificationSettings(@Param('id') id: string) {
+    return this.userProfileService.getNotificationSettings(id);
+  }
+
+  @Patch(':id/notification-settings')
+  updateNotificationSettings(
+    @Param('id') id: string,
+    @Body() dto: UpdateNotificationSettingsDto,
+  ) {
+    return this.userProfileService.updateNotificationSettings(id, dto);
+  }
+
+  @Post(':id/notification-settings')
+  createNotificationSettings(
+    @Param('id') id: string,
+    @Body() dto: CreateNotificationSettingsDto,
+  ) {
+    return this.userProfileService.createNotificationSettings(id, dto);
   }
 
   @Get('search')

@@ -89,7 +89,7 @@ import {
 } from '../types/event-types';
 import { IEventHandler, IEventHandlerRegistry } from '../interfaces/event-handler.interface';
 import { NotificationService } from '../../notification/services/notification.service';
-import { ReputationService } from '../../reputation/reputation.service';
+import { validateEventData } from '../utils/event-validation.util';
 
 /**
  * Handler for PROJECT_CREATED events
@@ -101,14 +101,13 @@ class ProjectCreatedHandler implements IEventHandler {
   constructor(private readonly prisma: PrismaService) { }
 
   validate(event: ParsedContractEvent): boolean {
-    const data = event.data as unknown as ProjectCreatedEvent;
-    return !!(
-      data.projectId !== undefined &&
-      data.creator &&
-      data.fundingGoal &&
-      data.deadline &&
-      data.token
-    );
+    try {
+      validateEventData('PROJECT_CREATED', event.data);
+      return true;
+    } catch (error) {
+      this.logger.error(`Event validation failed: ${error.message}`, event.data);
+      return false;
+    }
   }
 
   async handle(event: ParsedContractEvent): Promise<void> {
@@ -164,8 +163,13 @@ class ContributionMadeHandler implements IEventHandler {
   ) { }
 
   validate(event: ParsedContractEvent): boolean {
-    const data = event.data as unknown as ContributionMadeEvent;
-    return !!(data.projectId !== undefined && data.contributor && data.amount);
+    try {
+      validateEventData('CONTRIBUTION_MADE', event.data);
+      return true;
+    } catch (error) {
+      this.logger.error(`Event validation failed: ${error.message}`, event.data);
+      return false;
+    }
   }
 
   async handle(event: ParsedContractEvent): Promise<void> {
