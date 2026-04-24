@@ -4,6 +4,7 @@ extern crate std;
 
 use academy_rewards::AcademyRewardsContract;
 use messaging::UpgradeableMessagingContract;
+use shared::circuit_breaker::CircuitBreakerConfig;
 use shared::governance::ProposalStatus;
 use social_rewards::SocialRewardsContract;
 use soroban_sdk::{
@@ -72,8 +73,13 @@ fn test_academy_rewards_trigger_social_rewards() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
+    let cb_config = CircuitBreakerConfig {
+        max_volume_per_period: 10_000_000,
+        max_tx_count_per_period: 100,
+        period_duration: 3600,
+    };
 
-    academy.initialize(&admin);
+    academy.initialize(&admin, &cb_config);
     social.init(&admin);
 
     academy.create_badge_type(
@@ -117,7 +123,13 @@ fn test_trading_interacts_with_fee_distribution() {
     let mut approvers = Vec::new(&env);
     approvers.push_back(approver);
 
-    trading.init(&admin, &approvers, &executor);
+    let cb_config = CircuitBreakerConfig {
+        max_volume_per_period: 10_000_000,
+        max_tx_count_per_period: 100,
+        period_duration: 3600,
+    };
+
+    trading.init(&admin, &approvers, &executor, &cb_config);
 
     token_admin.mint(&trader, &1000i128);
 
@@ -169,9 +181,15 @@ fn test_messaging_notifications_from_other_contract_flows() {
     let mut approvers = Vec::new(&env);
     approvers.push_back(approver);
 
-    messaging.init(&admin, &approvers, &executor);
+    let cb_config = CircuitBreakerConfig {
+        max_volume_per_period: 10_000_000,
+        max_tx_count_per_period: 100,
+        period_duration: 3600,
+    };
 
-    academy.initialize(&admin);
+    messaging.init(&admin, &approvers, &executor, &cb_config);
+
+    academy.initialize(&admin, &cb_config);
     academy.create_badge_type(
         &admin,
         &2u32,
@@ -216,8 +234,14 @@ fn test_shared_governance_module_across_contracts() {
     let mut approvers = Vec::new(&env);
     approvers.push_back(approver.clone());
 
-    trading.init(&admin, &approvers, &executor);
-    messaging.init(&admin, &approvers, &executor);
+    let cb_config = CircuitBreakerConfig {
+        max_volume_per_period: 10_000_000,
+        max_tx_count_per_period: 100,
+        period_duration: 3600,
+    };
+
+    trading.init(&admin, &approvers, &executor, &cb_config);
+    messaging.init(&admin, &approvers, &executor, &cb_config);
 
     let trading_proposal = trading.propose_upgrade(
         &admin,

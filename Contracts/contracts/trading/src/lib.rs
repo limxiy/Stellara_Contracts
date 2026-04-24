@@ -1,15 +1,24 @@
 #![no_std]
 
 use shared::acl::ACL;
+use shared::circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerState, PauseLevel,
+};
 use shared::fees::FeeManager;
 use shared::governance::{GovernanceManager, GovernanceRole, UpgradeProposal};
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec,
+};
 
 /// Version of this contract implementation
 const CONTRACT_VERSION: u32 = 1;
 
 /// Maximum number of recent trades to keep in hot storage
 const MAX_RECENT_TRADES: u32 = 100;
+/// Hard cap on the number of orders that can be executed atomically in one batch
+const MAX_BATCH_SIZE: u32 = 25;
+/// Default validity window for submitted solvency proofs
+const DEFAULT_SOLVENCY_PROOF_TTL_SECS: u64 = 3600;
 
 /// Storage keys as constants to avoid repeated symbol creation
 mod storage_keys {
@@ -19,10 +28,13 @@ mod storage_keys {
     pub const ROLES: Symbol = symbol_short!("roles");
     pub const STATS: Symbol = symbol_short!("stats");
     pub const VERSION: Symbol = symbol_short!("ver");
-    pub const PAUSE: Symbol = symbol_short!("pause");
     pub const TRADE_COUNT: Symbol = symbol_short!("t_cnt");
     pub const RL_CFG: Symbol = symbol_short!("rl_cfg");
     pub const PREM: Symbol = symbol_short!("prem");
+    pub const ORDER_COUNT: Symbol = symbol_short!("o_cnt");
+    pub const PRIV_TRADE_COUNT: Symbol = symbol_short!("pt_cnt");
+    pub const PRIV_AUDIT_COUNT: Symbol = symbol_short!("pa_cnt");
+    pub const SOLVENCY_TTL: Symbol = symbol_short!("s_ttl");
 }
 
 /// Trading contract with upgradeability and governance
@@ -39,6 +51,45 @@ pub struct Trade {
     /// Signed amount: positive = buy, negative = sell
     pub signed_amount: i128,
     pub price: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OrderSide {
+    Buy,
+    Sell,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OrderStatus {
+    Open,
+    PartiallyFilled,
+    Filled,
+    Cancelled,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TimeInForce {
+    Gtc,
+    Ioc,
+    Fok,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct LimitOrder {
+    pub id: u64,
+    pub owner: Address,
+    pub pair: Symbol,
+    pub side: OrderSide,
+    pub price: i128,
+    pub amount: i128,
+    pub remaining: i128,
+    pub status: OrderStatus,
+    pub tif: TimeInForce,
     pub timestamp: u64,
 }
 
@@ -85,6 +136,99 @@ pub struct FeeCollected {
     pub timestamp: u64,
 }
 
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OrderCreated {
+    pub order_id: u64,
+    pub owner: Address,
+    pub pair: Symbol,
+    pub is_buy: bool,
+    pub price: i128,
+    pub amount: i128,
+    pub tif: TimeInForce,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OrderCancelled {
+    pub order_id: u64,
+    pub owner: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OrderMatched {
+    pub maker_order_id: u64,
+    pub taker_order_id: u64,
+    pub pair: Symbol,
+    pub amount: i128,
+    pub price: i128,
+    pub timestamp: u64,
+}
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrivateBalanceCommitment {
+    pub commitment: BytesN<32>,
+    pub nonce: u64,
+    pub updated_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SolvencyProofRecord {
+    pub proof_hash: BytesN<32>,
+    pub assets_commitment: BytesN<32>,
+    pub liabilities_commitment: BytesN<32>,
+    pub balance_commitment: BytesN<32>,
+    pub nonce: u64,
+    pub submitted_at: u64,
+    pub expires_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrivateTradeRecord {
+    pub id: u64,
+    pub trader: Address,
+    pub pair: Symbol,
+    pub price: i128,
+    pub is_buy: bool,
+    pub amount_commitment: BytesN<32>,
+    pub balance_commitment: BytesN<32>,
+    pub solvency_proof_hash: BytesN<32>,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComplianceViewKey {
+    pub encrypted_key: Bytes,
+    pub key_version: u32,
+    pub updated_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrivateTradeAuditRecord {
+    pub audit_id: u64,
+    pub trade_id: u64,
+    pub auditor: Address,
+    pub trader: Address,
+    pub action: Symbol,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PrivateTradeAuditView {
+    pub trade: PrivateTradeRecord,
+    pub proof: Vec<SolvencyProofRecord>,
+    pub trader_view_key: Vec<ComplianceViewKey>,
+    pub selective_disclosure: Vec<Bytes>,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum TradeError {
@@ -96,6 +240,19 @@ pub enum TradeError {
     RateLimitExceeded = 3006,
     GlobalRateLimitExceeded = 3007,
     InvalidRateLimitConfig = 3008,
+    BatchTooLarge = 3009,
+    InvalidPrice = 3010,
+    OrderNotFound = 3011,
+    OrderNotCancelable = 3012,
+    NoLiquidity = 3013,
+    OrderWouldNotFullyFill = 3014,
+    InvalidCommitment = 3015,
+    MissingPrivateBalance = 3016,
+    MissingSolvencyProof = 3017,
+    InvalidSolvencyProof = 3018,
+    SolvencyProofExpired = 3019,
+    PrivateTradeNotFound = 3020,
+    AuditUnauthorized = 3021,
 }
 
 impl From<TradeError> for soroban_sdk::Error {
@@ -124,6 +281,79 @@ fn require_initialized(env: &Env) -> Result<(), TradeError> {
     }
 }
 
+fn require_trade_not_paused(env: &Env, func_name: Symbol) -> Result<(), TradeError> {
+    let state = CircuitBreaker::get_state(env);
+
+    if state.pause_level == PauseLevel::Full {
+        return Err(TradeError::ContractPaused);
+    }
+
+    if state.pause_level == PauseLevel::Partial {
+        let paused_funcs: soroban_sdk::Map<Symbol, bool> = env
+            .storage()
+            .persistent()
+            .get(&symbol_short!("cb_p_fns"))
+            .unwrap_or_else(|| soroban_sdk::Map::new(env));
+
+        if paused_funcs.get(func_name).unwrap_or(false) {
+            return Err(TradeError::ContractPaused);
+        }
+    }
+
+    Ok(())
+}
+
+fn set_trade_pause_level(env: &Env, level: PauseLevel) {
+    let mut state = CircuitBreaker::get_state(env);
+    state.pause_level = level;
+    env.storage()
+        .persistent()
+        .set(&symbol_short!("cb_state"), &state);
+
+    env.events()
+        .publish((symbol_short!("cb_pause"),), (level as u32,));
+}
+
+fn pause_trade_function(env: &Env, func_name: Symbol) {
+    let mut paused_funcs: soroban_sdk::Map<Symbol, bool> = env
+        .storage()
+        .persistent()
+        .get(&symbol_short!("cb_p_fns"))
+        .unwrap_or_else(|| soroban_sdk::Map::new(env));
+
+    paused_funcs.set(func_name.clone(), true);
+    env.storage()
+        .persistent()
+        .set(&symbol_short!("cb_p_fns"), &paused_funcs);
+
+    let mut state = CircuitBreaker::get_state(env);
+    if state.pause_level == PauseLevel::None {
+        state.pause_level = PauseLevel::Partial;
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("cb_state"), &state);
+    }
+
+    env.events()
+        .publish((symbol_short!("cb_f_psd"), func_name), ());
+}
+
+fn unpause_trade_function(env: &Env, func_name: Symbol) {
+    let mut paused_funcs: soroban_sdk::Map<Symbol, bool> = env
+        .storage()
+        .persistent()
+        .get(&symbol_short!("cb_p_fns"))
+        .unwrap_or_else(|| soroban_sdk::Map::new(env));
+
+    paused_funcs.remove(func_name.clone());
+    env.storage()
+        .persistent()
+        .set(&symbol_short!("cb_p_fns"), &paused_funcs);
+
+    env.events()
+        .publish((symbol_short!("cb_f_ups"), func_name), ());
+}
+
 fn read_rate_limit_config(env: &Env) -> RateLimitConfig {
     if let Some(cfg) = env.storage().persistent().get(&storage_keys::RL_CFG) {
         return cfg;
@@ -137,6 +367,7 @@ fn read_rate_limit_config(env: &Env) -> RateLimitConfig {
     }
 }
 
+#[cfg(not(test))]
 fn is_premium_user(env: &Env, user: &Address) -> bool {
     let premium_users: soroban_sdk::Map<Address, bool> = env
         .storage()
@@ -147,21 +378,25 @@ fn is_premium_user(env: &Env, user: &Address) -> bool {
     premium_users.get(user.clone()).unwrap_or(false)
 }
 
+#[cfg(not(test))]
 fn get_user_window_usage(env: &Env, trader: &Address, window: u64) -> u32 {
     let key = (symbol_short!("rlu"), trader.clone(), window);
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
+#[cfg(not(test))]
 fn set_user_window_usage(env: &Env, trader: &Address, window: u64, count: u32) {
     let key = (symbol_short!("rlu"), trader.clone(), window);
     env.storage().persistent().set(&key, &count);
 }
 
+#[cfg(not(test))]
 fn get_global_window_usage(env: &Env, window: u64) -> u32 {
     let key = (symbol_short!("rlg"), window);
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
+#[cfg(not(test))]
 fn set_global_window_usage(env: &Env, window: u64, count: u32) {
     let key = (symbol_short!("rlg"), window);
     env.storage().persistent().set(&key, &count);
@@ -170,41 +405,396 @@ fn set_global_window_usage(env: &Env, window: u64, count: u32) {
 fn check_and_consume_trade_rate_limit(env: &Env, trader: &Address) -> Result<(), TradeError> {
     #[cfg(test)]
     {
+        let _ = (env, trader);
         return Ok(());
     }
 
-    let cfg = read_rate_limit_config(env);
-
-    if cfg.window_secs == 0
-        || cfg.user_limit == 0
-        || cfg.global_limit == 0
-        || cfg.premium_user_limit == 0
+    #[cfg(not(test))]
     {
-        return Err(TradeError::InvalidRateLimitConfig);
+        let cfg = read_rate_limit_config(env);
+
+        if cfg.window_secs == 0
+            || cfg.user_limit == 0
+            || cfg.global_limit == 0
+            || cfg.premium_user_limit == 0
+        {
+            return Err(TradeError::InvalidRateLimitConfig);
+        }
+
+        let now = env.ledger().timestamp();
+        let window = now / cfg.window_secs;
+
+        let is_premium = is_premium_user(env, trader);
+        let allowed_user_limit = if is_premium {
+            cfg.premium_user_limit
+        } else {
+            cfg.user_limit
+        };
+
+        let current_user = get_user_window_usage(env, trader, window);
+        if current_user >= allowed_user_limit {
+            return Err(TradeError::RateLimitExceeded);
+        }
+
+        let current_global = get_global_window_usage(env, window);
+        if current_global >= cfg.global_limit {
+            return Err(TradeError::GlobalRateLimitExceeded);
+        }
+
+        set_user_window_usage(env, trader, window, current_user + 1);
+        set_global_window_usage(env, window, current_global + 1);
+
+        Ok(())
+    }
+}
+
+fn validate_batch_size(len: u32) -> Result<(), TradeError> {
+    if len > MAX_BATCH_SIZE {
+        return Err(TradeError::BatchTooLarge);
+    }
+    Ok(())
+}
+
+fn ensure_tradeable(
+    env: &Env,
+    trader: &Address,
+) -> Result<soroban_sdk::storage::Persistent, TradeError> {
+    require_initialized(env)?;
+    check_and_consume_trade_rate_limit(env, trader)?;
+    require_trade_not_paused(env, symbol_short!("trade"))?;
+
+    Ok(env.storage().persistent())
+}
+
+fn next_order_id(env: &Env) -> u64 {
+    let mut id: u64 = env
+        .storage()
+        .persistent()
+        .get(&storage_keys::ORDER_COUNT)
+        .unwrap_or(0);
+
+    id += 1;
+    env.storage()
+        .persistent()
+        .set(&storage_keys::ORDER_COUNT, &id);
+    id
+}
+
+fn read_order(env: &Env, id: u64) -> Option<LimitOrder> {
+    let key = (symbol_short!("order"), id);
+    env.storage().persistent().get(&key)
+}
+
+fn write_order(env: &Env, order: &LimitOrder) {
+    let key = (symbol_short!("order"), order.id);
+    env.storage().persistent().set(&key, order);
+}
+
+fn order_book_key(pair: &Symbol, is_buy: bool) -> (Symbol, Symbol, bool) {
+    (symbol_short!("obook"), pair.clone(), is_buy)
+}
+
+fn read_order_book(env: &Env, pair: &Symbol, is_buy: bool) -> Vec<u64> {
+    let key = order_book_key(pair, is_buy);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn write_order_book(env: &Env, pair: &Symbol, is_buy: bool, ids: &Vec<u64>) {
+    let key = order_book_key(pair, is_buy);
+    env.storage().persistent().set(&key, ids);
+}
+
+fn push_order_to_book(env: &Env, pair: &Symbol, is_buy: bool, order_id: u64) {
+    let mut ids = read_order_book(env, pair, is_buy);
+    ids.push_back(order_id);
+    write_order_book(env, pair, is_buy, &ids);
+}
+
+fn remove_order_from_book(env: &Env, pair: &Symbol, is_buy: bool, order_id: u64) {
+    let ids = read_order_book(env, pair, is_buy);
+    let mut updated = Vec::new(env);
+
+    for existing_id in ids.iter() {
+        if existing_id != order_id {
+            updated.push_back(existing_id);
+        }
     }
 
-    let now = env.ledger().timestamp();
-    let window = now / cfg.window_secs;
+    write_order_book(env, pair, is_buy, &updated);
+}
 
-    let current_user = get_user_window_usage(env, trader, window);
-    let current_global = get_global_window_usage(env, window);
+fn order_matches(incoming: &LimitOrder, resting: &LimitOrder) -> bool {
+    if incoming.pair != resting.pair {
+        return false;
+    }
 
-    let allowed_user_limit = if is_premium_user(env, trader) {
-        cfg.premium_user_limit
-    } else {
-        cfg.user_limit
+    match (&incoming.side, &resting.side) {
+        (OrderSide::Buy, OrderSide::Sell) => incoming.price >= resting.price,
+        (OrderSide::Sell, OrderSide::Buy) => incoming.price <= resting.price,
+        _ => false,
+    }
+}
+
+fn pick_best_match_index(env: &Env, incoming: &LimitOrder, opposite_ids: &Vec<u64>) -> Option<u32> {
+    let mut best_index: Option<u32> = None;
+    let mut best_price: i128 = 0;
+    let mut best_timestamp: u64 = 0;
+
+    let mut i: u32 = 0;
+    for order_id in opposite_ids.iter() {
+        if let Some(order) = read_order(env, order_id) {
+            let is_open =
+                order.status == OrderStatus::Open || order.status == OrderStatus::PartiallyFilled;
+
+            if is_open && order.remaining > 0 && order_matches(incoming, &order) {
+                match incoming.side {
+                    OrderSide::Buy => {
+                        // Best sell = lowest price, then earliest timestamp.
+                        if best_index.is_none()
+                            || order.price < best_price
+                            || (order.price == best_price && order.timestamp < best_timestamp)
+                        {
+                            best_index = Some(i);
+                            best_price = order.price;
+                            best_timestamp = order.timestamp;
+                        }
+                    }
+                    OrderSide::Sell => {
+                        // Best buy = highest price, then earliest timestamp.
+                        if best_index.is_none()
+                            || order.price > best_price
+                            || (order.price == best_price && order.timestamp < best_timestamp)
+                        {
+                            best_index = Some(i);
+                            best_price = order.price;
+                            best_timestamp = order.timestamp;
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+
+    best_index
+}
+
+fn available_fill_for_order(env: &Env, incoming: &LimitOrder) -> i128 {
+    let opposite_is_buy = matches!(incoming.side, OrderSide::Sell);
+    let opposite_ids = read_order_book(env, &incoming.pair, opposite_is_buy);
+
+    let mut total_available: i128 = 0;
+    for order_id in opposite_ids.iter() {
+        if let Some(order) = read_order(env, order_id) {
+            let is_open =
+                order.status == OrderStatus::Open || order.status == OrderStatus::PartiallyFilled;
+
+            if is_open && order.remaining > 0 && order_matches(incoming, &order) {
+                total_available += order.remaining;
+                if total_available >= incoming.remaining {
+                    return total_available;
+                }
+            }
+        }
+    }
+
+    total_available
+}
+
+fn record_trade(
+    env: &Env,
+    trader: &Address,
+    pair: &Symbol,
+    amount: i128,
+    price: i128,
+    is_buy: bool,
+) -> u64 {
+    let storage = env.storage().persistent();
+    let current_timestamp = env.ledger().timestamp();
+    let signed_amount = if is_buy { amount } else { -amount };
+
+    let trade_id: u64 = storage.get(&storage_keys::TRADE_COUNT).unwrap_or(0) + 1;
+    let mut stats: TradeStats = storage.get(&storage_keys::STATS).unwrap_or(TradeStats {
+        total_trades: 0,
+        total_volume: 0,
+    });
+
+    let trade = Trade {
+        id: trade_id,
+        trader: trader.clone(),
+        pair: pair.clone(),
+        signed_amount,
+        price,
+        timestamp: current_timestamp,
     };
 
-    if current_user >= allowed_user_limit {
-        return Err(TradeError::RateLimitExceeded);
+    let trade_key = (symbol_short!("trade"), trade_id);
+    storage.set(&trade_key, &trade);
+
+    stats.total_trades += 1;
+    stats.total_volume += amount;
+
+    storage.set(&storage_keys::TRADE_COUNT, &trade_id);
+    storage.set(&storage_keys::STATS, &stats);
+
+    env.events().publish(
+        (symbol_short!("trade"),),
+        TradeExecuted {
+            trade_id,
+            trader: trader.clone(),
+            pair: pair.clone(),
+            signed_amount,
+            price,
+            timestamp: current_timestamp,
+            is_buy,
+        },
+    );
+
+    trade_id
+}
+
+fn execute_trade_batch(
+    env: &Env,
+    trader: &Address,
+    orders: &Vec<(Symbol, i128, i128, bool)>,
+    fee_token: &Address,
+    fee_per_trade: i128,
+    fee_recipient: &Address,
+) -> Result<Vec<u64>, TradeError> {
+    if orders.is_empty() {
+        return Ok(Vec::new(env));
     }
 
-    if current_global >= cfg.global_limit {
-        return Err(TradeError::GlobalRateLimitExceeded);
+    validate_batch_size(orders.len())?;
+
+    for (_, amount, _, _) in orders.iter() {
+        if amount <= 0 {
+            return Err(TradeError::InvalidAmount);
+        }
     }
 
-    set_user_window_usage(env, trader, window, current_user + 1);
-    set_global_window_usage(env, window, current_global + 1);
+    let _storage = ensure_tradeable(env, trader)?;
+
+    let total_fees = fee_per_trade * (orders.len() as i128);
+    FeeManager::collect_fee(env, fee_token, trader, fee_recipient, total_fees)
+        .map_err(|_| TradeError::InsufficientBalance)?;
+
+    let current_timestamp = env.ledger().timestamp();
+    let mut trade_ids = Vec::new(env);
+
+    for (pair, amount, price, is_buy) in orders.iter() {
+        let trade_id = record_trade(env, trader, &pair, amount, price, is_buy);
+        trade_ids.push_back(trade_id);
+    }
+
+    env.events().publish(
+        (symbol_short!("fee_col"),),
+        FeeCollected {
+            trade_id: trade_ids.get(0).unwrap_or(0),
+            trader: trader.clone(),
+            fee_amount: total_fees,
+            fee_recipient: fee_recipient.clone(),
+            fee_token: fee_token.clone(),
+            timestamp: current_timestamp,
+        },
+    );
+
+    Ok(trade_ids)
+}
+
+fn match_limit_order(env: &Env, incoming: &mut LimitOrder) -> Result<(), TradeError> {
+    let opposite_is_buy = matches!(incoming.side, OrderSide::Sell);
+
+    loop {
+        if incoming.remaining <= 0 {
+            break;
+        }
+
+        let opposite_ids = read_order_book(env, &incoming.pair, opposite_is_buy);
+        let Some(best_idx) = pick_best_match_index(env, incoming, &opposite_ids) else {
+            break;
+        };
+
+        let maker_id = opposite_ids.get(best_idx).unwrap();
+        let Some(mut maker) = read_order(env, maker_id) else {
+            remove_order_from_book(env, &incoming.pair, opposite_is_buy, maker_id);
+            continue;
+        };
+
+        let maker_open =
+            maker.status == OrderStatus::Open || maker.status == OrderStatus::PartiallyFilled;
+
+        if !maker_open || maker.remaining <= 0 || !order_matches(incoming, &maker) {
+            remove_order_from_book(env, &incoming.pair, opposite_is_buy, maker_id);
+            continue;
+        }
+
+        let fill_amount = if incoming.remaining < maker.remaining {
+            incoming.remaining
+        } else {
+            maker.remaining
+        };
+
+        let execution_price = maker.price;
+        let timestamp = env.ledger().timestamp();
+
+        maker.remaining -= fill_amount;
+        incoming.remaining -= fill_amount;
+
+        maker.status = if maker.remaining == 0 {
+            OrderStatus::Filled
+        } else {
+            OrderStatus::PartiallyFilled
+        };
+
+        incoming.status = if incoming.remaining == 0 {
+            OrderStatus::Filled
+        } else {
+            OrderStatus::PartiallyFilled
+        };
+
+        write_order(env, &maker);
+
+        if maker.remaining == 0 {
+            remove_order_from_book(env, &incoming.pair, opposite_is_buy, maker.id);
+        }
+
+        let incoming_is_buy = incoming.side == OrderSide::Buy;
+        let maker_is_buy = maker.side == OrderSide::Buy;
+
+        record_trade(
+            env,
+            &incoming.owner,
+            &incoming.pair,
+            fill_amount,
+            execution_price,
+            incoming_is_buy,
+        );
+
+        record_trade(
+            env,
+            &maker.owner,
+            &maker.pair,
+            fill_amount,
+            execution_price,
+            maker_is_buy,
+        );
+
+        env.events().publish(
+            (symbol_short!("match"),),
+            OrderMatched {
+                maker_order_id: maker.id,
+                taker_order_id: incoming.id,
+                pair: incoming.pair.clone(),
+                amount: fill_amount,
+                price: execution_price,
+                timestamp,
+            },
+        );
+    }
 
     Ok(())
 }
@@ -217,6 +807,7 @@ impl UpgradeableTradingContract {
         admin: Address,
         approvers: Vec<Address>,
         executor: Address,
+        cb_config: CircuitBreakerConfig,
     ) -> Result<(), TradeError> {
         if env.storage().persistent().has(&storage_keys::INIT) {
             return Err(TradeError::Unauthorized);
@@ -258,8 +849,12 @@ impl UpgradeableTradingContract {
         storage.set(&storage_keys::STATS, &stats);
         storage.set(&storage_keys::VERSION, &CONTRACT_VERSION);
         storage.set(&storage_keys::TRADE_COUNT, &0u64);
+        storage.set(&storage_keys::ORDER_COUNT, &0u64);
         storage.set(&storage_keys::RL_CFG, &default_rate_limit);
         storage.set(&storage_keys::PREM, &premium_users);
+
+        // Initialize circuit breaker
+        CircuitBreaker::init(&env, cb_config);
 
         Ok(())
     }
@@ -277,75 +872,194 @@ impl UpgradeableTradingContract {
         fee_recipient: Address,
     ) -> Result<u64, TradeError> {
         trader.require_auth();
-        require_initialized(&env)?;
 
         if amount <= 0 {
             return Err(TradeError::InvalidAmount);
         }
 
-        check_and_consume_trade_rate_limit(&env, &trader)?;
-
-        let storage = env.storage().persistent();
-
-        if storage.get(&storage_keys::PAUSE).unwrap_or(false) {
-            return Err(TradeError::ContractPaused);
+        if price <= 0 {
+            return Err(TradeError::InvalidPrice);
         }
 
-        let current_timestamp = env.ledger().timestamp();
+        let _storage = ensure_tradeable(&env, &trader)?;
+        CircuitBreaker::track_activity(&env, amount);
 
         FeeManager::collect_fee(&env, &fee_token, &trader, &fee_recipient, fee_amount)
             .map_err(|_| TradeError::InsufficientBalance)?;
 
-        let trade_id: u64 = storage.get(&storage_keys::TRADE_COUNT).unwrap_or(0) + 1;
-        let signed_amount = if is_buy { amount } else { -amount };
+        let trade_id = record_trade(&env, &trader, &pair, amount, price, is_buy);
 
-        let trade = Trade {
-            id: trade_id,
-            trader: trader.clone(),
-            pair: pair.clone(),
-            signed_amount,
-            price,
-            timestamp: current_timestamp,
-        };
-
-        let trade_key = (symbol_short!("trade"), trade_id);
-        storage.set(&trade_key, &trade);
-
-        let mut stats: TradeStats = storage.get(&storage_keys::STATS).unwrap_or(TradeStats {
-            total_trades: 0,
-            total_volume: 0,
-        });
-
-        stats.total_trades += 1;
-        stats.total_volume += amount;
-
-        storage.set(&storage_keys::TRADE_COUNT, &trade_id);
-        storage.set(&storage_keys::STATS, &stats);
-
-        // Emit FeeCollected event
-        let fee_event = FeeCollected {
-            trade_id,
-            trader: trader.clone(),
-            fee_amount,
-            fee_recipient,
-            fee_token,
-            timestamp: current_timestamp,
-        };
-        env.events().publish((symbol_short!("fee_col"),), fee_event);
-
-        // Emit TradeExecuted event
-        let trade_event = TradeExecuted {
-            trade_id,
-            trader,
-            pair,
-            signed_amount,
-            price,
-            timestamp: current_timestamp,
-            is_buy,
-        };
-        env.events().publish((symbol_short!("trade"),), trade_event);
+        env.events().publish(
+            (symbol_short!("fee_col"),),
+            FeeCollected {
+                trade_id,
+                trader,
+                fee_amount,
+                fee_recipient,
+                fee_token,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         Ok(trade_id)
+    }
+
+    pub fn create_limit_order(
+        env: Env,
+        trader: Address,
+        pair: Symbol,
+        is_buy: bool,
+        price: i128,
+        amount: i128,
+        tif: TimeInForce,
+    ) -> Result<u64, TradeError> {
+        trader.require_auth();
+        require_initialized(&env)?;
+        check_and_consume_trade_rate_limit(&env, &trader)?;
+        require_trade_not_paused(&env, symbol_short!("trade"))?;
+
+        if amount <= 0 {
+            return Err(TradeError::InvalidAmount);
+        }
+
+        if price <= 0 {
+            return Err(TradeError::InvalidPrice);
+        }
+
+        let side = if is_buy {
+            OrderSide::Buy
+        } else {
+            OrderSide::Sell
+        };
+
+        let timestamp = env.ledger().timestamp();
+        let order_id = next_order_id(&env);
+
+        let mut order = LimitOrder {
+            id: order_id,
+            owner: trader.clone(),
+            pair: pair.clone(),
+            side,
+            price,
+            amount,
+            remaining: amount,
+            status: OrderStatus::Open,
+            tif: tif.clone(),
+            timestamp,
+        };
+
+        if tif == TimeInForce::Fok {
+            let available = available_fill_for_order(&env, &order);
+            if available < order.amount {
+                return Err(TradeError::OrderWouldNotFullyFill);
+            }
+        }
+
+        write_order(&env, &order);
+
+        env.events().publish(
+            (symbol_short!("ord_cr"),),
+            OrderCreated {
+                order_id,
+                owner: trader,
+                pair,
+                is_buy,
+                price,
+                amount,
+                tif,
+                timestamp,
+            },
+        );
+
+        match_limit_order(&env, &mut order)?;
+        write_order(&env, &order);
+
+        match order.tif {
+            TimeInForce::Gtc => {
+                if order.remaining > 0 {
+                    push_order_to_book(
+                        &env,
+                        &order.pair,
+                        matches!(order.side, OrderSide::Buy),
+                        order.id,
+                    );
+                }
+            }
+            TimeInForce::Ioc => {
+                if order.remaining > 0 {
+                    order.status = if order.remaining == order.amount {
+                        OrderStatus::Cancelled
+                    } else {
+                        OrderStatus::Cancelled
+                    };
+                    write_order(&env, &order);
+                }
+            }
+            TimeInForce::Fok => {
+                if order.remaining > 0 {
+                    return Err(TradeError::OrderWouldNotFullyFill);
+                }
+            }
+        }
+
+        Ok(order_id)
+    }
+
+    pub fn cancel_order(env: Env, trader: Address, order_id: u64) -> Result<(), TradeError> {
+        trader.require_auth();
+        require_initialized(&env)?;
+
+        let Some(mut order) = read_order(&env, order_id) else {
+            return Err(TradeError::OrderNotFound);
+        };
+
+        if order.owner != trader {
+            return Err(TradeError::Unauthorized);
+        }
+
+        if order.status != OrderStatus::Open && order.status != OrderStatus::PartiallyFilled {
+            return Err(TradeError::OrderNotCancelable);
+        }
+
+        order.status = OrderStatus::Cancelled;
+        write_order(&env, &order);
+        remove_order_from_book(
+            &env,
+            &order.pair,
+            matches!(order.side, OrderSide::Buy),
+            order.id,
+        );
+
+        env.events().publish(
+            (symbol_short!("ord_can"),),
+            OrderCancelled {
+                order_id,
+                owner: trader,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
+        Ok(())
+    }
+
+    pub fn get_order(env: Env, order_id: u64) -> Option<LimitOrder> {
+        read_order(&env, order_id)
+    }
+
+    pub fn get_open_orders(env: Env, pair: Symbol, is_buy: bool) -> Vec<LimitOrder> {
+        let ids = read_order_book(&env, &pair, is_buy);
+        let mut orders = Vec::new(&env);
+
+        for order_id in ids.iter() {
+            if let Some(order) = read_order(&env, order_id) {
+                if order.status == OrderStatus::Open || order.status == OrderStatus::PartiallyFilled
+                {
+                    orders.push_back(order);
+                }
+            }
+        }
+
+        orders
     }
 
     /// Set rate-limit config (ACL protected)
@@ -458,12 +1172,93 @@ impl UpgradeableTradingContract {
         trades
     }
 
+    /// Execute multiple trades atomically with a single fee transfer.
+    pub fn batch_trade(
+        env: Env,
+        trader: Address,
+        orders: Vec<(Symbol, i128, i128, bool)>,
+        fee_token: Address,
+        fee_per_trade: i128,
+        fee_recipient: Address,
+    ) -> Result<Vec<u64>, TradeError> {
+        trader.require_auth();
+        execute_trade_batch(
+            &env,
+            &trader,
+            &orders,
+            &fee_token,
+            fee_per_trade,
+            &fee_recipient,
+        )
+    }
+
+    /// Backwards-compatible alias retained for existing integrations.
+    pub fn trade_batch(
+        env: Env,
+        trader: Address,
+        orders: Vec<(Symbol, i128, i128, bool)>,
+        fee_token: Address,
+        fee_per_trade: i128,
+        fee_recipient: Address,
+    ) -> Result<Vec<u64>, TradeError> {
+        trader.require_auth();
+        execute_trade_batch(
+            &env,
+            &trader,
+            &orders,
+            &fee_token,
+            fee_per_trade,
+            &fee_recipient,
+        )
+    }
+
+    pub fn max_batch_size() -> u32 {
+        MAX_BATCH_SIZE
+    }
+
+    /// Set circuit breaker pause level (ACL protected)
+    pub fn set_pause_level(env: Env, admin: Address, level: PauseLevel) -> Result<(), TradeError> {
+        admin.require_auth();
+        require_initialized(&env)?;
+        ACL::require_permission(&env, &admin, &Symbol::new(&env, "pause"));
+        set_trade_pause_level(&env, level);
+        Ok(())
+    }
+
+    /// Pause specific function (ACL protected)
+    pub fn pause_function(env: Env, admin: Address, func_name: Symbol) -> Result<(), TradeError> {
+        admin.require_auth();
+        require_initialized(&env)?;
+        ACL::require_permission(&env, &admin, &Symbol::new(&env, "pause"));
+        pause_trade_function(&env, func_name);
+        Ok(())
+    }
+
+    /// Unpause specific function (ACL protected)
+    pub fn unpause_function(env: Env, admin: Address, func_name: Symbol) -> Result<(), TradeError> {
+        admin.require_auth();
+        require_initialized(&env)?;
+        ACL::require_permission(&env, &admin, &Symbol::new(&env, "unpause"));
+        unpause_trade_function(&env, func_name);
+        Ok(())
+    }
+
+    /// Get current circuit breaker state
+    pub fn get_cb_state(env: Env) -> CircuitBreakerState {
+        CircuitBreaker::get_state(&env)
+    }
+
+    /// Get current circuit breaker config
+    pub fn get_cb_config(env: Env) -> CircuitBreakerConfig {
+        CircuitBreaker::get_config(&env)
+    }
+
     /// Pause the contract (ACL protected)
     pub fn pause(env: Env, admin: Address) -> Result<(), TradeError> {
         admin.require_auth();
         require_initialized(&env)?;
         ACL::require_permission(&env, &admin, &Symbol::new(&env, "pause"));
-        env.storage().persistent().set(&storage_keys::PAUSE, &true);
+        set_trade_pause_level(&env, PauseLevel::Full);
         Ok(())
     }
 
@@ -472,7 +1267,7 @@ impl UpgradeableTradingContract {
         admin.require_auth();
         require_initialized(&env)?;
         ACL::require_permission(&env, &admin, &Symbol::new(&env, "unpause"));
-        env.storage().persistent().set(&storage_keys::PAUSE, &false);
+        set_trade_pause_level(&env, PauseLevel::None);
         Ok(())
     }
 
@@ -629,6 +1424,271 @@ impl UpgradeableTradingContract {
 
         GovernanceManager::cancel_proposal(&env, proposal_id, admin)
             .map_err(|_| TradeError::Unauthorized)
+    }
+
+    /// Submit a ZK proof of solvency
+    pub fn submit_solvency_proof(
+        env: Env,
+        trader: Address,
+        proof_hash: BytesN<32>,
+        assets_commitment: BytesN<32>,
+        liabilities_commitment: BytesN<32>,
+        balance_commitment: BytesN<32>,
+    ) -> Result<(), TradeError> {
+        trader.require_auth();
+        require_initialized(&env)?;
+
+        let now = env.ledger().timestamp();
+        let ttl_secs: u64 = env
+            .storage()
+            .persistent()
+            .get(&storage_keys::SOLVENCY_TTL)
+            .unwrap_or(DEFAULT_SOLVENCY_PROOF_TTL_SECS);
+
+        let record_key = (symbol_short!("solv_prf"), trader.clone());
+        let nonce: u64 = env
+            .storage()
+            .persistent()
+            .get(&record_key)
+            .map(|r: SolvencyProofRecord| r.nonce + 1)
+            .unwrap_or(1);
+
+        let record = SolvencyProofRecord {
+            proof_hash: proof_hash.clone(),
+            assets_commitment,
+            liabilities_commitment,
+            balance_commitment,
+            nonce,
+            submitted_at: now,
+            expires_at: now + ttl_secs,
+        };
+
+        env.storage().persistent().set(&record_key, &record);
+
+        env.events()
+            .publish((symbol_short!("solv_sub"),), (trader, proof_hash));
+
+        Ok(())
+    }
+
+    /// Update private balance commitment
+    pub fn update_private_balance(
+        env: Env,
+        trader: Address,
+        commitment: BytesN<32>,
+    ) -> Result<(), TradeError> {
+        trader.require_auth();
+        require_initialized(&env)?;
+
+        let record_key = (symbol_short!("prv_bal"), trader.clone());
+        let nonce: u64 = env
+            .storage()
+            .persistent()
+            .get(&record_key)
+            .map(|r: PrivateBalanceCommitment| r.nonce + 1)
+            .unwrap_or(1);
+
+        let record = PrivateBalanceCommitment {
+            commitment: commitment.clone(),
+            nonce,
+            updated_at: env.ledger().timestamp(),
+        };
+
+        env.storage().persistent().set(&record_key, &record);
+
+        env.events()
+            .publish((symbol_short!("bal_upd"),), (trader, commitment));
+
+        Ok(())
+    }
+
+    /// Execute a private trade
+    pub fn execute_private_trade(
+        env: Env,
+        trader: Address,
+        pair: Symbol,
+        price: i128,
+        is_buy: bool,
+        amount_commitment: BytesN<32>,
+        balance_commitment: BytesN<32>,
+        solvency_proof_hash: BytesN<32>,
+    ) -> Result<u64, TradeError> {
+        trader.require_auth();
+        require_initialized(&env)?;
+
+        // Verify solvency proof
+        let solv_key = (symbol_short!("solv_prf"), trader.clone());
+        let solv_record: SolvencyProofRecord = env
+            .storage()
+            .persistent()
+            .get(&solv_key)
+            .ok_or(TradeError::MissingSolvencyProof)?;
+
+        let now = env.ledger().timestamp();
+        if now > solv_record.expires_at {
+            return Err(TradeError::SolvencyProofExpired);
+        }
+
+        if solv_record.proof_hash != solvency_proof_hash {
+            return Err(TradeError::InvalidSolvencyProof);
+        }
+
+        // Increment private trade count
+        let mut trade_id: u64 = env
+            .storage()
+            .persistent()
+            .get(&storage_keys::PRIV_TRADE_COUNT)
+            .unwrap_or(0);
+        trade_id += 1;
+        env.storage()
+            .persistent()
+            .set(&storage_keys::PRIV_TRADE_COUNT, &trade_id);
+
+        let trade = PrivateTradeRecord {
+            id: trade_id,
+            trader: trader.clone(),
+            pair: pair.clone(),
+            price,
+            is_buy,
+            amount_commitment: amount_commitment.clone(),
+            balance_commitment: balance_commitment.clone(),
+            solvency_proof_hash: solvency_proof_hash.clone(),
+            timestamp: now,
+        };
+
+        let trade_key = (symbol_short!("prv_trd"), trade_id);
+        env.storage().persistent().set(&trade_key, &trade);
+
+        // Update balance commitment mapping
+        let bal_key = (symbol_short!("prv_bal"), trader.clone());
+        let bal_nonce: u64 = env
+            .storage()
+            .persistent()
+            .get(&bal_key)
+            .map(|r: PrivateBalanceCommitment| r.nonce + 1)
+            .unwrap_or(1);
+        let bal_record = PrivateBalanceCommitment {
+            commitment: balance_commitment.clone(),
+            nonce: bal_nonce,
+            updated_at: now,
+        };
+        env.storage().persistent().set(&bal_key, &bal_record);
+
+        env.events().publish(
+            (symbol_short!("prv_exec"),),
+            (
+                trade_id,
+                trader,
+                pair,
+                amount_commitment,
+                balance_commitment,
+            ),
+        );
+
+        Ok(trade_id)
+    }
+
+    /// Register a compliance view key
+    pub fn register_compliance_view_key(
+        env: Env,
+        trader: Address,
+        encrypted_key: Bytes,
+    ) -> Result<(), TradeError> {
+        trader.require_auth();
+        require_initialized(&env)?;
+
+        let key_symbol = (symbol_short!("cmp_key"), trader.clone());
+        let version: u32 = env
+            .storage()
+            .persistent()
+            .get(&key_symbol)
+            .map(|k: ComplianceViewKey| k.key_version + 1)
+            .unwrap_or(1);
+
+        let record = ComplianceViewKey {
+            encrypted_key: encrypted_key.clone(),
+            key_version: version,
+            updated_at: env.ledger().timestamp(),
+        };
+
+        env.storage().persistent().set(&key_symbol, &record);
+
+        env.events()
+            .publish((symbol_short!("key_reg"),), (trader, version));
+
+        Ok(())
+    }
+
+    /// Audit a private trade
+    pub fn audit_private_trade(
+        env: Env,
+        auditor: Address,
+        trade_id: u64,
+        action: Symbol,
+    ) -> Result<PrivateTradeAuditView, TradeError> {
+        auditor.require_auth();
+        require_initialized(&env)?;
+
+        // Simple auth check - require 'audit' permission
+        let auditor_permission = Symbol::new(&env, "audit");
+        if !ACL::has_permission(&env, &auditor, &auditor_permission) {
+            return Err(TradeError::AuditUnauthorized);
+        }
+
+        let trade_key = (symbol_short!("prv_trd"), trade_id);
+        let trade: PrivateTradeRecord = env
+            .storage()
+            .persistent()
+            .get(&trade_key)
+            .ok_or(TradeError::PrivateTradeNotFound)?;
+
+        let solv_key = (symbol_short!("solv_prf"), trade.trader.clone());
+        let proof = env.storage().persistent().get(&solv_key);
+
+        let key_symbol = (symbol_short!("cmp_key"), trade.trader.clone());
+        let trader_view_key = env.storage().persistent().get(&key_symbol);
+
+        let mut audit_id: u64 = env
+            .storage()
+            .persistent()
+            .get(&storage_keys::PRIV_AUDIT_COUNT)
+            .unwrap_or(0);
+        audit_id += 1;
+        env.storage()
+            .persistent()
+            .set(&storage_keys::PRIV_AUDIT_COUNT, &audit_id);
+
+        let record = PrivateTradeAuditRecord {
+            audit_id,
+            trade_id,
+            auditor: auditor.clone(),
+            trader: trade.trader.clone(),
+            action: action.clone(),
+            timestamp: env.ledger().timestamp(),
+        };
+
+        let audit_key = (symbol_short!("prv_aud"), audit_id);
+        env.storage().persistent().set(&audit_key, &record);
+
+        env.events()
+            .publish((symbol_short!("prv_audt"),), (audit_id, trade_id, auditor));
+
+        let mut proof_vec = Vec::new(&env);
+        if let Some(p) = proof {
+            proof_vec.push_back(p);
+        }
+
+        let mut key_vec = Vec::new(&env);
+        if let Some(k) = trader_view_key {
+            key_vec.push_back(k);
+        }
+
+        Ok(PrivateTradeAuditView {
+            trade,
+            proof: proof_vec,
+            trader_view_key: key_vec,
+            selective_disclosure: Vec::new(&env),
+        })
     }
 }
 

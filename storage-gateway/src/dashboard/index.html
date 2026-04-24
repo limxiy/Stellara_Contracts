@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stellara Storage Gateway Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .animate-pulse-slow {
+            animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div id="app" class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-gray-800 border-b border-gray-700">
+            <div class="container mx-auto px-4 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <h1 class="text-2xl font-bold text-blue-400">Storage Gateway</h1>
+                        <span id="status" class="px-3 py-1 rounded-full text-xs font-semibold bg-green-500 text-white">ONLINE</span>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <span id="uptime" class="text-sm text-gray-400">Uptime: 0s</span>
+                        <button onclick="refreshData()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="container mx-auto px-4 py-8">
+            <!-- Stats Overview -->
+            <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm">Total Uploads</p>
+                            <p id="totalUploads" class="text-3xl font-bold text-blue-400">0</p>
+                        </div>
+                        <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm">Total Retrievals</p>
+                            <p id="totalRetrievals" class="text-3xl font-bold text-green-400">0</p>
+                        </div>
+                        <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path>
+                        </svg>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm">Cache Hit Rate</p>
+                            <p id="cacheHitRate" class="text-3xl font-bold text-yellow-400">0%</p>
+                        </div>
+                        <svg class="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm">Active Providers</p>
+                            <p id="activeProviders" class="text-3xl font-bold text-purple-400">0/3</p>
+                        </div>
+                        <svg class="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Charts Section -->
+            <section class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <h2 class="text-xl font-semibold mb-4">Upload Activity</h2>
+                    <canvas id="uploadChart"></canvas>
+                </div>
+
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <h2 class="text-xl font-semibold mb-4">Provider Performance</h2>
+                    <canvas id="providerChart"></canvas>
+                </div>
+            </section>
+
+            <!-- Provider Status -->
+            <section class="bg-gray-800 rounded-lg p-6 border border-gray-700 mb-8">
+                <h2 class="text-xl font-semibold mb-4">Provider Status</h2>
+                <div id="providerStatus" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Provider cards will be inserted here -->
+                </div>
+            </section>
+
+            <!-- Recent Activity -->
+            <section class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h2 class="text-xl font-semibold mb-4">Recent Activity</h2>
+                <div id="recentActivity" class="space-y-2">
+                    <!-- Activity items will be inserted here -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin + '/api/v1';
+        let uploadChart, providerChart;
+        let activityLog = [];
+
+        // Initialize dashboard
+        async function initDashboard() {
+            await initCharts();
+            await refreshData();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(refreshData, 30000);
+            
+            // Update uptime every second
+            setInterval(updateUptime, 1000);
+        }
+
+        // Initialize charts
+        function initCharts() {
+            const ctx1 = document.getElementById('uploadChart').getContext('2d');
+            uploadChart = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Uploads',
+                        data: [],
+                        borderColor: 'rgb(59, 130, 246)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#9CA3AF' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#9CA3AF' },
+                            grid: { color: '#374151' }
+                        },
+                        y: {
+                            ticks: { color: '#9CA3AF' },
+                            grid: { color: '#374151' }
+                        }
+                    }
+                }
+            });
+
+            const ctx2 = document.getElementById('providerChart').getContext('2d');
+            providerChart = new Chart(ctx2, {
+                type: 'bar',
+                data: {
+                    labels: ['IPFS', 'Arweave', 'Filecoin'],
+                    datasets: [{
+                        label: 'Success Rate (%)',
+                        data: [0, 0, 0],
+                        backgroundColor: [
+                            'rgba(59, 130, 246, 0.8)',
+                            'rgba(34, 197, 94, 0.8)',
+                            'rgba(168, 85, 247, 0.8)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#9CA3AF' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#9CA3AF' },
+                            grid: { color: '#374151' }
+                        },
+                        y: {
+                            ticks: { color: '#9CA3AF' },
+                            grid: { color: '#374151' },
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        // Refresh all data
+        async function refreshData() {
+            try {
+                await Promise.all([
+                    updateMetrics(),
+                    updateStatus(),
+                    updateProviderStatus()
+                ]);
+            } catch (error) {
+                console.error('Failed to refresh data:', error);
+                showError('Failed to refresh dashboard data');
+            }
+        }
+
+        // Update metrics
+        async function updateMetrics() {
+            try {
+                const response = await fetch(`${API_BASE}/metrics`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const metrics = data.metrics;
+                    
+                    document.getElementById('totalUploads').textContent = metrics.uploads.total;
+                    document.getElementById('totalRetrievals').textContent = metrics.retrievals.total;
+                    document.getElementById('cacheHitRate').textContent = metrics.retrievals.cacheHitRate.toFixed(1) + '%';
+                    
+                    // Update upload chart
+                    const now = new Date().toLocaleTimeString();
+                    uploadChart.data.labels.push(now);
+                    uploadChart.data.datasets[0].data.push(metrics.uploads.total);
+                    
+                    if (uploadChart.data.labels.length > 10) {
+                        uploadChart.data.labels.shift();
+                        uploadChart.data.datasets[0].data.shift();
+                    }
+                    
+                    uploadChart.update();
+                    
+                    // Update provider chart
+                    const providerNames = Object.keys(metrics.uploads.byProvider);
+                    const successRates = providerNames.map(name => {
+                        const uploads = metrics.uploads.byProvider[name] || 0;
+                        const errors = metrics.errors.byProvider[name] || 0;
+                        return uploads > 0 ? ((uploads / (uploads + errors)) * 100).toFixed(1) : 0;
+                    });
+                    
+                    providerChart.data.labels = providerNames.map(name => name.toUpperCase());
+                    providerChart.data.datasets[0].data = successRates;
+                    providerChart.update();
+                    
+                    addActivity('info', 'Metrics updated');
+                }
+            } catch (error) {
+                console.error('Failed to update metrics:', error);
+            }
+        }
+
+        // Update status
+        async function updateStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const status = data.status;
+                    const activeCount = status.providers.filter(p => p.online).length;
+                    document.getElementById('activeProviders').textContent = `${activeCount}/${status.providers.length}`;
+                    
+                    if (activeCount === 0) {
+                        document.getElementById('status').textContent = 'OFFLINE';
+                        document.getElementById('status').className = 'px-3 py-1 rounded-full text-xs font-semibold bg-red-500 text-white';
+                    } else if (activeCount < status.providers.length) {
+                        document.getElementById('status').textContent = 'DEGRADED';
+                        document.getElementById('status').className = 'px-3 py-1 rounded-full text-xs font-semibold bg-yellow-500 text-white';
+                    } else {
+                        document.getElementById('status').textContent = 'ONLINE';
+                        document.getElementById('status').className = 'px-3 py-1 rounded-full text-xs font-semibold bg-green-500 text-white';
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to update status:', error);
+            }
+        }
+
+        // Update provider status
+        async function updateProviderStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const container = document.getElementById('providerStatus');
+                    container.innerHTML = '';
+                    
+                    data.status.providers.forEach(provider => {
+                        const card = document.createElement('div');
+                        card.className = 'bg-gray-700 rounded-lg p-4 border border-gray-600';
+                        
+                        const statusColor = provider.online ? 'green' : 'red';
+                        const latencyColor = provider.latency < 1000 ? 'green' : provider.latency < 3000 ? 'yellow' : 'red';
+                        
+                        card.innerHTML = `
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="font-semibold text-lg">${provider.name.toUpperCase()}</h3>
+                                <span class="px-2 py-1 rounded text-xs font-semibold bg-${statusColor}-500 text-white">
+                                    ${provider.online ? 'ONLINE' : 'OFFLINE'}
+                                </span>
+                            </div>
+                            <div class="space-y-1 text-sm">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-400">Latency:</span>
+                                    <span class="text-${latencyColor}-400">${provider.latency}ms</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-400">Error Rate:</span>
+                                    <span class="text-${provider.errorRate > 10 ? 'red' : 'green'}-400">${provider.errorRate.toFixed(1)}%</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-400">Features:</span>
+                                    <span class="text-blue-400">${provider.features.length}</span>
+                                </div>
+                            </div>
+                        `;
+                        
+                        container.appendChild(card);
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to update provider status:', error);
+            }
+        }
+
+        // Update uptime
+        function updateUptime() {
+            const uptimeElement = document.getElementById('uptime');
+            const uptime = parseInt(uptimeElement.textContent.replace('Uptime: ', '').replace('s', '')) || 0;
+            uptimeElement.textContent = `Uptime: ${uptime + 1}s`;
+        }
+
+        // Add activity to log
+        function addActivity(type, message) {
+            const activityContainer = document.getElementById('recentActivity');
+            const activity = document.createElement('div');
+            activity.className = 'flex items-center space-x-2 text-sm';
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? 'red' : type === 'warning' ? 'yellow' : 'blue';
+            
+            activity.innerHTML = `
+                <span class="text-gray-400">${timestamp}</span>
+                <span class="w-2 h-2 rounded-full bg-${color}-400"></span>
+                <span class="text-gray-300">${message}</span>
+            `;
+            
+            activityContainer.insertBefore(activity, activityContainer.firstChild);
+            
+            // Keep only last 10 activities
+            while (activityContainer.children.length > 10) {
+                activityContainer.removeChild(activityContainer.lastChild);
+            }
+        }
+
+        // Show error message
+        function showError(message) {
+            addActivity('error', message);
+        }
+
+        // Initialize when DOM is loaded
+        document.addEventListener('DOMContentLoaded', initDashboard);
+    </script>
+</body>
+</html>

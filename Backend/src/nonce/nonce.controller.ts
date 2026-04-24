@@ -1,25 +1,38 @@
-import { Controller, Post } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Body, Controller, Post } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { IsString } from 'class-validator';
 import { NonceService } from './nonce.service';
-import { NonceResponseDto } from './dto/nonce.dto';
 
-@ApiTags('nonce')
+class RequestNonceDto {
+  @IsString()
+  walletAddress: string;
+}
+
+class VerifySignatureDto {
+  @IsString()
+  walletAddress: string;
+
+  @IsString()
+  signature: string;
+}
+
+@ApiTags('Auth')
 @Controller('nonce')
 export class NonceController {
   constructor(private readonly nonceService: NonceService) {}
 
   @Post()
-  @ApiOperation({
-    summary: 'Generate nonce',
-    description:
-      'Generates a unique nonce for transaction signing. Used to prevent replay attacks.',
-  })
-  @ApiResponse({
-    status: 201,
-    description: 'Nonce generated successfully',
-    type: NonceResponseDto,
-  })
-  async getNonce(): Promise<NonceResponseDto> {
-    return { nonce: await this.nonceService.generateNonce() };
+  @ApiOperation({ summary: 'Generate nonce for wallet-based auth' })
+  @ApiResponse({ status: 201, description: 'Nonce generated' })
+  getNonce(@Body() dto: RequestNonceDto): { nonce: string } {
+    return { nonce: this.nonceService.generateNonce(dto.walletAddress) };
+  }
+
+  @Post('verify')
+  @ApiOperation({ summary: 'Verify wallet signature against issued nonce' })
+  @ApiResponse({ status: 201, description: 'Signature valid' })
+  verify(@Body() dto: VerifySignatureDto): { verified: boolean } {
+    this.nonceService.verifySignature(dto.walletAddress, dto.signature);
+    return { verified: true };
   }
 }

@@ -1,3 +1,4 @@
+#![no_std]
 //! Shared utilities and types for Stellara contracts
 
 use soroban_sdk::contracttype;
@@ -11,6 +12,7 @@ pub struct ContractConfig {
 }
 
 pub mod acl;
+pub mod circuit_breaker;
 pub mod fees;
 pub mod governance;
 

@@ -1,4 +1,4 @@
-import { DECAY_HALF_LIFE_DAYS } from '../Reputation.constants';
+import { DECAY_HALF_LIFE_DAYS, DECAY_RATES_BY_ACTIVITY, ActivityType } from '../reputation.constants';
 
 /**
  * Exponential time-decay weight.
@@ -27,4 +27,20 @@ export function timeDecayWeight(
   const msPerDay = 86_400_000;
   const ageDays = Math.max(0, (now.getTime() - occurredAt.getTime()) / msPerDay);
   return Math.pow(2, -ageDays / halfLifeDays);
+}
+
+/**
+ * Calculate decay weight using activity-type-specific half-life.
+ *
+ * @param occurredAt  When the activity happened.
+ * @param activityType The type of activity (determines decay rate).
+ * @param now         Reference point (injectable for testability).
+ */
+export function activityDecayWeight(
+  occurredAt: Date,
+  activityType: ActivityType,
+  now: Date = new Date(),
+): number {
+  const halfLifeDays = DECAY_RATES_BY_ACTIVITY[activityType] || DECAY_HALF_LIFE_DAYS;
+  return timeDecayWeight(occurredAt, now, halfLifeDays);
 }

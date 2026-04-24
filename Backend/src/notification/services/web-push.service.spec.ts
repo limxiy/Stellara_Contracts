@@ -1,11 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WebPushService } from './web-push.service';
 
-jest.mock('web-push', () => ({
-  setVapidDetails: jest.fn(),
-  sendNotification: jest.fn().mockResolvedValue({}),
-}));
-
 describe('WebPushService', () => {
   let service: WebPushService;
 

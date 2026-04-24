@@ -14,9 +14,11 @@ export interface ErrorResponse {
     code: string;
     message: string;
     details?: ErrorDetail[];
+  };
+  meta: {
     timestamp: string;
+    requestId: string;
     path?: string;
-    requestId?: string;
   };
 }
 
@@ -53,9 +55,11 @@ export abstract class BaseHttpException extends HttpException {
         code: this.code,
         message: this.message,
         details: this.details,
+      },
+      meta: {
         timestamp: this.timestamp,
-        path: this.path,
         requestId: this.requestId,
+        path: this.path,
       },
     };
   }

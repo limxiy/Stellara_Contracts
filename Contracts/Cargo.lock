@@ -6,6 +6,7 @@ version = 4
 name = "academy-rewards"
 version = "0.0.0"
 dependencies = [
+ "shared",
  "soroban-sdk",
 ]
 
@@ -13,6 +14,7 @@ dependencies = [
 name = "academy-vesting"
 version = "0.1.0"
 dependencies = [
+ "shared",
  "soroban-sdk",
 ]
 
@@ -191,6 +193,15 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+]
+
+[[package]]
+name = "cross-chain-router"
+version = "0.1.0"
+dependencies = [
+ "shared",
+ "soroban-sdk",
+ "soroban-spec",
 ]
 
 [[package]]
@@ -1243,7 +1254,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "stellara-staking-rewards"
+name = "stellara-synthetic-assets"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
@@ -1270,6 +1281,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tcr"
+version = "0.1.0"
+dependencies = [
+ "shared",
+ "soroban-sdk",
 ]
 
 [[package]]

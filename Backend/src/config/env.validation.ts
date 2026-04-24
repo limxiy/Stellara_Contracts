@@ -1,19 +1,19 @@
 import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsNumber, IsString, IsOptional, IsBoolean, validateSync } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  Max,
+  Min,
+  IsNumber,
+  IsOptional,
+  IsString,
+  validateSync,
+} from 'class-validator';
 
 enum Environment {
   Development = 'development',
   Production = 'production',
   Test = 'test',
-}
-
-enum LogLevel {
-  Trace = 'trace',
-  Debug = 'debug',
-  Info = 'info',
-  Warn = 'warn',
-  Error = 'error',
-  Fatal = 'fatal',
 }
 
 class EnvironmentVariables {
@@ -26,20 +26,33 @@ class EnvironmentVariables {
   @IsString()
   API_PREFIX: string;
 
+  @IsOptional()
   @IsString()
-  DATABASE_HOST: string;
+  DEFAULT_API_VERSION?: string;
 
+  @IsOptional()
+  @IsString()
+  API_VERSION_SUNSET?: string;
+
+  @IsOptional()
   @IsNumber()
-  DATABASE_PORT: number;
+  HTTP_REQUEST_TIMEOUT_MS?: number;
 
-  @IsString()
-  DATABASE_USER: string;
+  @IsOptional()
+  @IsNumber()
+  DATABASE_STATEMENT_TIMEOUT_MS?: number;
 
-  @IsString()
-  DATABASE_PASSWORD: string;
+  @IsOptional()
+  @IsNumber()
+  IPFS_TIMEOUT_MS?: number;
 
-  @IsString()
-  DATABASE_NAME: string;
+  @IsOptional()
+  @IsNumber()
+  SENDGRID_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsNumber()
+  STELLAR_RPC_TIMEOUT_MS?: number;
 
   @IsString()
   DATABASE_URL: string;
@@ -51,18 +64,23 @@ class EnvironmentVariables {
   REDIS_PORT: number;
 
   @IsString()
+  IPFS_HOST: string;
+
+  @IsNumber()
+  IPFS_PORT: number;
+
+  @IsString()
+  IPFS_PROTOCOL: string;
+
+  @IsOptional()
+  @IsString()
+  IPFS_API_KEY?: string;
+
+  @IsString()
   JWT_SECRET: string;
 
-  @IsString()
-  JWT_EXPIRATION: string;
-
-  @IsOptional()
-  @IsString()
-  JWT_REFRESH_SECRET?: string;
-
-  @IsOptional()
-  @IsString()
-  JWT_REFRESH_EXPIRATION?: string;
+  @IsNumber()
+  JWT_EXPIRATION: number;
 
   @IsString()
   STELLAR_NETWORK: string;
@@ -79,186 +97,93 @@ class EnvironmentVariables {
   @IsString()
   ESCROW_CONTRACT_ID: string;
 
+  @IsOptional()
+  @IsString()
+  PROFIT_DISTRIBUTION_CONTRACT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  SUBSCRIPTION_POOL_CONTRACT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  GOVERNANCE_CONTRACT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  REPUTATION_CONTRACT_ID?: string;
+
   @IsNumber()
+  @Min(1000)
+  @Max(60000)
   INDEXER_POLL_INTERVAL_MS: number;
 
   @IsNumber()
   INDEXER_REORG_DEPTH_THRESHOLD: number;
 
-  // Stripe Configuration
-  @IsString()
-  STRIPE_SECRET_KEY: string;
-
-  @IsString()
-  STRIPE_PUBLISHABLE_KEY: string;
-
-  @IsString()
-  STRIPE_WEBHOOK_SECRET: string;
-
-  @IsString()
-  STRIPE_PRICE_ID_STARTER: string;
-
-  @IsString()
-  STRIPE_PRICE_ID_PROFESSIONAL: string;
-
-  @IsString()
-  STRIPE_PRICE_ID_ENTERPRISE: string;
-  // Logging Configuration
   @IsOptional()
-  @IsEnum(LogLevel)
-  LOG_LEVEL?: LogLevel;
+  @IsNumber()
+  INDEXER_MAX_EVENTS_PER_FETCH?: number;
+
+  @IsOptional()
+  @IsNumber()
+  INDEXER_RETRY_ATTEMPTS?: number;
+
+  @IsOptional()
+  @IsNumber()
+  INDEXER_RETRY_DELAY_MS?: number;
 
   @IsOptional()
   @IsBoolean()
-  LOG_PRETTY_PRINT?: boolean;
+  EMAIL_NOTIFICATIONS_ENABLED?: boolean;
 
   @IsOptional()
   @IsString()
-  SERVICE_NAME?: string;
+  SENDGRID_API_KEY?: string;
 
   @IsOptional()
   @IsString()
-  LOG_FORMAT?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  LOG_INCLUDE_CONTEXT?: boolean;
-
-  @IsOptional()
-  @IsString()
-  SESSION_TTL_SECONDS?: string;
-
-  @IsOptional()
-  @IsString()
-  RATE_LIMIT_QUEUE_TIMEOUT_MS?: string;
-
-  @IsOptional()
-  @IsString()
-  RATE_LIMIT_BUCKET_TTL_MS?: string;
-
-  @IsOptional()
-  @IsString()
-  RATE_LIMIT_QUEUE_CONCURRENCY?: string;
-
-  @IsOptional()
-  @IsString()
-  RATE_LIMIT_BURST_MULTIPLIER?: string;
-
-  @IsOptional()
-  @IsString()
-  SHUTDOWN_DRAIN_TIMEOUT_MS?: string;
-
-  @IsOptional()
-  @IsString()
-  INDEX_ANALYSIS_REPORT_DIR?: string;
-
-  @IsOptional()
-  @IsString()
-  INDEX_ANALYSIS_MIGRATIONS_DIR?: string;
-  // AWS S3 Backup Configuration
-  @IsOptional()
-  @IsString()
-  AWS_REGION?: string;
-
-  @IsOptional()
-  @IsString()
-  AWS_ACCESS_KEY_ID?: string;
-
-  @IsOptional()
-  @IsString()
-  AWS_SECRET_ACCESS_KEY?: string;
-
-  @IsOptional()
-  @IsString()
-  S3_BACKUP_BUCKET?: string;
-
-  @IsOptional()
-  @IsString()
-  S3_BACKUP_PREFIX?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  WAL_ARCHIVE_ENABLED?: boolean;
-
-  @IsOptional()
-  @IsString()
-  WAL_ARCHIVE_BUCKET?: string;
-
-  @IsOptional()
-  @IsString()
-  WAL_ARCHIVE_PREFIX?: string;
+  SENDGRID_FROM_EMAIL?: string;
 
   @IsOptional()
   @IsNumber()
-  BACKUP_RETENTION_DAYS?: number;
+  EMAIL_OUTBOX_ALERT_THRESHOLD?: number;
 
   @IsOptional()
   @IsNumber()
-  BACKUP_RETENTION_WEEKS?: number;
+  EMAIL_RETRY_MAX_ATTEMPTS?: number;
 
   @IsOptional()
   @IsNumber()
-  BACKUP_RETENTION_MONTHS?: number;
-
-  @IsOptional()
-  @IsString()
-  BACKUP_SCHEDULE?: string;
-
-  @IsOptional()
-  @IsString()
-  BACKUP_ENCRYPTION_KEY_ID?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  BACKUP_VERIFY_AFTER_UPLOAD?: boolean;
-
-  @IsOptional()
-  @IsString()
-  BACKUP_VERIFY_SCHEDULE?: string;
+  EMAIL_RETRY_MAX_AGE_DAYS?: number;
 
   @IsOptional()
   @IsNumber()
-  DR_RESTORE_TARGET_RTO_MINUTES?: number;
+  EMAIL_RETRY_BASE_BACKOFF_MS?: number;
 
   @IsOptional()
   @IsNumber()
-  DR_RESTORE_TARGET_RPO_MINUTES?: number;
+  EMAIL_RETRY_BATCH_SIZE?: number;
 
   @IsOptional()
   @IsString()
-  DR_TEST_SCHEDULE?: string;
+  IPFS_GATEWAY_URL?: string;
 
   @IsOptional()
   @IsString()
-  DEPLOYMENT_ENVIRONMENT?: string;
-
-  @IsOptional()
-  @IsString()
-  DEPLOYMENT_SLOT?: string;
-
-  @IsOptional()
-  @IsString()
-  RELEASE_VERSION?: string;
-
-  @IsOptional()
-  @IsString()
-  RELEASE_COMMIT_SHA?: string;
-
-  @IsOptional()
-  @IsString()
-  RELEASE_BUILD_ID?: string;
-
-  @IsOptional()
-  @IsString()
-  ACTIVE_COLOR?: string;
-
-  @IsOptional()
-  @IsString()
-  TRAFFIC_STATUS?: string;
+  IPFS_GATEWAY_URLS?: string;
 
   @IsOptional()
   @IsNumber()
-  WEBHOOK_REQUEST_TIMEOUT_MS?: number;
+  PROJECT_METADATA_FETCH_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsNumber()
+  PROJECT_METADATA_CACHE_TTL_MS?: number;
+
+  @IsOptional()
+  @IsNumber()
+  PROJECT_METADATA_CACHE_MAX_ENTRIES?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

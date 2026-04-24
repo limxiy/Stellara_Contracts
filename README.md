@@ -45,7 +45,7 @@ Project Structure
 ├── QUICK_REFERENCE.md  # Quick reference card
 └── README.md           # This file
 Prerequisites
-Rust 1.70 or later (Install via https://rustup.rs/ - required for running `cargo test`)
+Rust 1.70 or later
 Soroban SDK 20.5.0
 Stellar CLI tools
 Building
@@ -58,10 +58,6 @@ cargo build --release --target wasm32-unknown-unknown
 Testing
 # Run all tests (including new governance tests)
 cargo test --all
-
-# On Windows (PowerShell), you can use the provided script:
-# cd Contracts
-# .\test.ps1
 
 # Run specific contract tests
 cd contracts/trading

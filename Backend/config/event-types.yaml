@@ -1,0 +1,62 @@
+# Event Types Configuration
+# List all supported contract event types and their metadata
+# Example:
+# - type: project_created
+#   version: 1
+#   handler: ProjectCreatedHandler
+#   schema: project_created.schema.json
+#   wildcard: false
+#
+event_types:
+  - type: proj_new
+    version: 1
+    handler: ProjectCreatedHandler
+    schema: project_created.schema.json
+    wildcard: false
+  - type: contrib
+    version: 1
+    handler: ContributionMadeHandler
+    schema: contribution_made.schema.json
+    wildcard: false
+  - type: m_create
+    version: 1
+    handler: MilestoneCreatedHandler
+    schema: milestone_created.schema.json
+    wildcard: false
+  - type: m_apprv
+    version: 1
+    handler: MilestoneApprovedHandler
+    schema: milestone_approved.schema.json
+    wildcard: false
+  - type: m_reject
+    version: 1
+    handler: MilestoneRejectedHandler
+    schema: milestone_rejected.schema.json
+    wildcard: false
+  - type: release
+    version: 1
+    handler: FundsReleasedHandler
+    schema: funds_released.schema.json
+    wildcard: false
+  - type: proj_done
+    version: 1
+    handler: ProjectCompletedHandler
+    schema: project_completed.schema.json
+    wildcard: false
+  - type: proj_fail
+    version: 1
+    handler: ProjectFailedHandler
+    schema: project_failed.schema.json
+    wildcard: false
+  - type: policy_new
+    version: 1
+    handler: PolicyCreatedHandler
+    wildcard: false
+  - type: claim_sub
+    version: 1
+    handler: ClaimSubmittedHandler
+    wildcard: false
+  - type: claim_paid
+    version: 1
+    handler: ClaimPaidHandler
+    wildcard: false

@@ -1,182 +1,50 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
-// Prisma v7: datasource connection URL is configured in prisma.config.ts
 
 generator client {
   provider = "prisma-client-js"
 }
 
-// Provider is declared here for @db attribute support.
-// Connection URL is in prisma.config.ts (Prisma v7+)
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
   id              String   @id @default(cuid())
-  name            String?
   walletAddress   String   @unique @map("wallet_address")
   profileData     Json?    @map("profile_data")
   reputationScore Int      @default(0) @map("reputation_score")
   trustScore      Int      @default(500) @map("trust_score")
+  reputationLevel String   @default("BRONZE") @map("reputation_level")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   // Notification fields
-  phoneNumber      String? @unique @map("phone_number")
-  email            String? @unique @map("email_encrypted")
+  email            String? @unique
   pushSubscription Json?   @map("push_subscription")
-
-  // Encrypted PII fields
-  phoneEncrypted   Json? @map("phone_encrypted")
-  ssnEncrypted     Json? @map("ssn_encrypted")
-  addressEncrypted Json? @map("address_encrypted")
-
-  // Auth fields
-  roles              Role[]  @default([USER])
-  hashedRefreshToken String? @map("hashed_refresh_token")
-
-  // Tenant relation (optional — null for platform-level users)
-  tenantId String? @map("tenant_id")
-  tenant   Tenant? @relation(fields: [tenantId], references: [id])
 
   // Relations
   createdProjects      Project[]            @relation("ProjectCreator")
   contributions        Contribution[]
   reputationHistory    ReputationHistory[]
-  notificationSettings NotificationSetting?
+  notificationSettings NotificationSetting[]
   notifications        Notification[]
-  proposals            TransactionProposal[]
-  tenantMembers       TenantMember[]
-  experimentAssignments ExperimentAssignment[]
-  verificationSessions VerificationSession[]
-  userLocations       UserLocation[]
-  marginAccount        MarginAccount?
+  insurancePolicies    InsurancePolicy[]
+  notifications        Notification[]
+  weeklySummaries      WeeklyReputationSummary[]
 
-  @@unique([tenantId, email])
-  @@unique([tenantId, walletAddress])
-  @@index([tenantId, id])
-  @@index([tenantId, email])
-  @@index([tenantId, walletAddress])
+
+  // Snapshot Relations
+  userSnapshots        ReputationUserSnapshot[]
+  reputationTrends     ReputationTrend[]
+  // Dispute Relations
+  reputationDisputes   ReputationDispute[]
+  moderatedDisputes    ReputationDispute[] @relation("DisputeModerator")
+  disputeComments      DisputeComment[]
+  resolvedDisputes     DisputeResolution[] @relation("ResolutionModerator")
+
   @@map("users")
-}
-
-model UserLocation {
-  id              String   @id @default(cuid())
-  userId          String   @map("user_id")
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ipAddress       String   @map("ip_address")
-  country         String?
-  region          String?
-  city            String?
-  latitude        Float?
-  longitude       Float?
-  isp             String?
-  isVpn           Boolean  @default(false) @map("is_vpn")
-  isTor           Boolean  @default(false) @map("is_tor")
-  isProxy         Boolean  @default(false) @map("is_proxy")
-  userAgent       String?  @map("user_agent")
-  createdAt       DateTime @default(now()) @map("created_at")
-
-  @@index([userId])
-  @@index([ipAddress])
-  @@map("user_locations")
-}
-
-model CollateralAsset {
-  id              String   @id @default(cuid())
-  symbol          String   @unique
-  name            String
-  haircut         Decimal  @db.Decimal(5, 4) // e.g., 0.10 for 10% haircut
-  isLiquidatable  Boolean  @default(true)
-  minPledgeAmount Decimal  @db.Decimal(18, 4)
-  isActive        Boolean  @default(true)
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  pledges         CollateralPledge[]
-
-  @@map("collateral_assets")
-}
-
-model MarginAccount {
-  id                String   @id @default(cuid())
-  userId            String   @unique @map("user_id")
-  user              User     @relation(fields: [userId], references: [id])
-  totalBorrowed     Decimal  @default(0) @db.Decimal(18, 4) @map("total_borrowed")
-  totalCollateralUsd Decimal  @default(0) @db.Decimal(18, 4) @map("total_collateral_usd")
-  ltvRatio          Decimal  @default(0) @db.Decimal(5, 4) @map("ltv_ratio") // current Loan-to-Value
-  healthFactor      Decimal  @default(1.0) @db.Decimal(5, 4) @map("health_factor")
-  lastMarginCallAt  DateTime? @map("last_margin_call_at")
-  status            MarginAccountStatus @default(HEALTHY)
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  pledges           CollateralPledge[]
-  loans             Loan[]
-  liquidations      Liquidation[]
-
-  @@map("margin_accounts")
-}
-
-model CollateralPledge {
-  id                String   @id @default(cuid())
-  marginAccountId   String   @map("margin_account_id")
-  marginAccount     MarginAccount @relation(fields: [marginAccountId], references: [id])
-  assetSymbol       String   @map("asset_symbol")
-  asset             CollateralAsset @relation(fields: [assetSymbol], references: [symbol])
-  amount            Decimal  @db.Decimal(18, 4)
-  lockedAmount      Decimal  @default(0) @db.Decimal(18, 4) @map("locked_amount")
-  lastValuationUsd  Decimal? @db.Decimal(18, 4) @map("last_valuation_usd")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  @@unique([marginAccountId, assetSymbol])
-  @@map("collateral_pledges")
-}
-
-model Loan {
-  id                String   @id @default(cuid())
-  marginAccountId   String   @map("margin_account_id")
-  marginAccount     MarginAccount @relation(fields: [marginAccountId], references: [id])
-  assetSymbol       String   @map("asset_symbol")
-  amount            Decimal  @db.Decimal(18, 4)
-  interestRate      Decimal  @db.Decimal(5, 4) @map("interest_rate")
-  accruedInterest   Decimal  @default(0) @db.Decimal(18, 4) @map("accrued_interest")
-  lastInterestAccrual DateTime @default(now()) @map("last_interest_accrual")
-  status            LoanStatus @default(ACTIVE)
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  @@map("loans")
-}
-
-model Liquidation {
-  id                String   @id @default(cuid())
-  marginAccountId   String   @map("margin_account_id")
-  marginAccount     MarginAccount @relation(fields: [marginAccountId], references: [id])
-  liquidatorAddress String   @map("liquidator_address")
-  collateralSymbol  String   @map("collateral_symbol")
-  collateralAmount  Decimal  @db.Decimal(18, 4) @map("collateral_amount")
-  loanSymbol        String   @map("loan_symbol")
-  loanAmount        Decimal  @db.Decimal(18, 4) @map("loan_amount")
-  liquidationFee    Decimal  @db.Decimal(18, 4) @map("liquidation_fee")
-  timestamp         DateTime @default(now())
-
-  @@map("liquidations")
-}
-
-enum MarginAccountStatus {
-  HEALTHY
-  MARGIN_CALL
-  LIQUIDATION_PENDING
-  LIQUIDATED
-}
-
-enum LoanStatus {
-  ACTIVE
-  PAID
-  LIQUIDATED
 }
 
 model Project {
@@ -198,6 +66,7 @@ model Project {
   // Relations
   contributions Contribution[]
   milestones    Milestone[]
+  // publicGoodsProject PublicGoodsProject?  // TODO: Define PublicGoodsProject model
 
   @@map("projects")
 }
@@ -221,6 +90,7 @@ model Milestone {
   id             String          @id @default(cuid())
   projectId      String          @map("project_id")
   project        Project         @relation(fields: [projectId], references: [id])
+  contractMilestoneId String?    @map("contract_milestone_id")
   title          String
   description    String?
   fundingAmount  BigInt          @map("funding_amount")
@@ -229,6 +99,8 @@ model Milestone {
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
 
+  @@unique([projectId, contractMilestoneId])
+  @@index([projectId, contractMilestoneId])
   @@map("milestones")
 }
 
@@ -243,6 +115,65 @@ model ReputationHistory {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("reputation_history")
+}
+
+model ReputationActivity {
+  id           String             @id @default(cuid())
+  subjectId    String             @map("subject_id")
+  subject      User               @relation("ReputationSubject", fields: [subjectId], references: [id])
+  actorId      String?            @map("actor_id")
+  actor        User?              @relation("ReputationActor", fields: [actorId], references: [id])
+  activityType ActivityType       @map("activity_type")
+  value        Decimal            @db.Decimal(18, 4)
+  referenceId  String?            @map("reference_id")
+  occurredAt   DateTime           @map("occurred_at")
+  createdAt    DateTime           @default(now())
+
+  // Dispute Relations
+  reputationDisputes ReputationDispute[]
+
+  @@index([subjectId])
+  @@index([subjectId, activityType])
+  @@index([occurredAt])
+  @@map("reputation_activities")
+}
+
+model ReputationScore {
+  id                     String   @id @default(cuid())
+  subjectId              String   @unique @map("subject_id")
+  subject                User     @relation(fields: [subjectId], references: [id])
+  compositeScore         Decimal  @map("composite_score") @db.Decimal(6, 2)
+  successRateScore       Decimal  @map("success_rate_score") @db.Decimal(6, 2)
+  peerRatingScore        Decimal  @map("peer_rating_score") @db.Decimal(6, 2)
+  contributionSizeScore  Decimal  @map("contribution_size_score") @db.Decimal(6, 2)
+  communityFeedbackScore Decimal  @map("community_feedback_score") @db.Decimal(6, 2)
+  reliabilityScore       Decimal  @default(50) @map("reliability_score") @db.Decimal(6, 2)
+  expertiseScore         Decimal  @default(0) @map("expertise_score") @db.Decimal(6, 2)
+  communityScore         Decimal  @default(50) @map("community_score") @db.Decimal(6, 2)
+  activityCount          Int      @map("activity_count")
+  lowConfidence          Boolean  @default(false) @map("low_confidence")
+  calculatedAt           DateTime @updatedAt @map("calculated_at")
+
+  @@map("reputation_scores")
+}
+
+model ReputationDecayHistory {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  previousScore   Int      @map("previous_score")
+  newScore        Int      @map("new_score")
+  scoreChange     Int      @map("score_change")
+  decayFactor     Decimal  @map("decay_factor") @db.Decimal(6, 4)
+  activitiesCount Int      @map("activities_count")
+  exempted        Boolean  @default(false)
+  reason          String
+  occurredAt      DateTime @default(now()) @map("occurred_at")
+
+  @@index([userId])
+  @@index([occurredAt])
+  @@map("reputation_decay_history")
+}
+
 }
 
 model Category {
@@ -289,66 +220,11 @@ model ProcessedEvent {
   contractId      String   @map("contract_id")
   eventType       String   @map("event_type")
   transactionHash String   @map("transaction_hash")
-  contractType    String?  @map("contract_type")
-  decodedData     Json?    @map("decoded_data")
-  abiVersion      String?  @map("abi_version")
   processedAt     DateTime @default(now()) @map("processed_at")
 
+  @@index([network, ledgerSeq])
   @@index([contractId, eventType])
   @@map("processed_events")
-}
-
-model LedgerHeader {
-  sequence  Int      @id
-  hash      String   @unique
-  prevHash  String   @map("prev_hash")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([sequence])
-  @@map("ledger_headers")
-}
-
-model ContractAbiRegistry {
-  id              String               @id @default(uuid())
-  contractAddress String               @unique @map("contract_address")
-  contractType    String               @map("contract_type")
-  displayName     String               @map("display_name")
-  network         String               @default("stellar")
-  description     String?
-  status          AbiRegistryStatus    @default(ACTIVE)
-  currentVersion  String?              @map("current_version")
-  metadata        Json?
-  createdBy       String?              @map("created_by")
-  updatedBy       String?              @map("updated_by")
-  createdAt       DateTime             @default(now()) @map("created_at")
-  updatedAt       DateTime             @updatedAt @map("updated_at")
-  versions        ContractAbiVersion[]
-
-  @@index([contractType, network])
-  @@index([status, updatedAt])
-  @@map("contract_abi_registries")
-}
-
-model ContractAbiVersion {
-  id              String              @id @default(uuid())
-  registryId      String              @map("registry_id")
-  registry        ContractAbiRegistry @relation(fields: [registryId], references: [id], onDelete: Cascade)
-  version         String
-  isCurrent       Boolean             @default(false) @map("is_current")
-  isDeprecated    Boolean             @default(false) @map("is_deprecated")
-  abiSchema       Json                @map("abi_schema")
-  contractSchema  Json                @map("contract_schema")
-  functionSchemas Json                @map("function_schemas")
-  eventSchemas    Json                @map("event_schemas")
-  changelog       String?
-  compatibility   Json?
-  createdBy       String?             @map("created_by")
-  createdAt       DateTime            @default(now()) @map("created_at")
-
-  @@unique([registryId, version])
-  @@index([registryId, isCurrent])
-  @@index([version])
-  @@map("contract_abi_versions")
 }
 
 model IndexerLog {
@@ -365,65 +241,37 @@ model IndexerLog {
 }
 
 model NotificationSetting {
-  id                  String   @id @default(cuid())
-  userId              String   @unique @map("user_id")
-  user                User     @relation(fields: [userId], references: [id])
-  emailEnabled        Boolean  @default(true) @map("email_enabled")
-  pushEnabled         Boolean  @default(false) @map("push_enabled")
-  smsEnabled          Boolean  @default(false) @map("sms_enabled")
-  websocketEnabled    Boolean  @default(true) @map("websocket_enabled")
-  notifyContributions Boolean  @default(true) @map("notify_contributions")
-  notifyMilestones    Boolean  @default(true) @map("notify_milestones")
-  notifyDeadlines     Boolean  @default(true) @map("notify_deadlines")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                        String   @id @default(cuid())
+  userId                    String   @unique @map("user_id")
+  user                      User     @relation(fields: [userId], references: [id])
+  emailEnabled              Boolean  @default(true) @map("email_enabled")
+  pushEnabled               Boolean  @default(false) @map("push_enabled")
+  notifyContributions       Boolean  @default(true) @map("notify_contributions")
+  notifyMilestones          Boolean  @default(true) @map("notify_milestones")
+  notifyDeadlines           Boolean  @default(true) @map("notify_deadlines")
+  notifyReputationChanges   Boolean  @default(true) @map("notify_reputation_changes")
+  notifyLevelUps            Boolean  @default(true) @map("notify_level_ups")
+  notifyWeeklySummary       Boolean  @default(true) @map("notify_weekly_summary")
+  reputationChangeThreshold Int      @default(50) @map("reputation_change_threshold")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
 
   @@map("notification_settings")
 }
 
 model Notification {
-  id         String                 @id @default(cuid())
-  userId     String                 @map("user_id")
-  user       User                   @relation(fields: [userId], references: [id])
-  type       NotificationType
-  title      String
-  message    String
-  read       Boolean                @default(false)
-  data       Json? // Optional metadata (e.g., projectId)
-  createdAt  DateTime               @default(now()) @map("created_at")
-  deliveries NotificationDelivery[]
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  data      Json? // Optional metadata (e.g., projectId)
+  createdAt DateTime         @default(now()) @map("created_at")
 
   @@index([userId])
   @@map("notifications")
-}
-
-model NotificationDelivery {
-  id             String              @id @default(cuid())
-  notificationId String              @map("notification_id")
-  notification   Notification        @relation(fields: [notificationId], references: [id])
-  channel        NotificationChannel
-  status         DeliveryStatus      @default(PENDING)
-  errorMessage   String?             @map("error_message")
-  attempts       Int                 @default(0)
-  lastAttemptAt  DateTime?           @map("last_attempt_at")
-  createdAt      DateTime            @default(now()) @map("created_at")
-  updatedAt      DateTime            @updatedAt @map("updated_at")
-
-  @@map("notification_deliveries")
-}
-
-enum NotificationChannel {
-  EMAIL
-  SMS
-  PUSH
-  WEBSOCKET
-}
-
-enum DeliveryStatus {
-  PENDING
-  SENT
-  FAILED
-  RETRYING
 }
 
 model EmailOutbox {
@@ -441,11 +289,37 @@ model EmailOutbox {
   @@map("email_outbox")
 }
 
+model NotificationOutbox {
+  id             String              @id @default(cuid())
+  notificationId String?             @map("notification_id")
+  userId         String              @map("user_id")
+  channel        NotificationChannel
+  status         DeliveryStatus      @default(PENDING)
+  dedupKey       String              @unique @map("dedup_key")
+  payload        Json
+  attempts       Int                 @default(0)
+  maxAttempts    Int                 @default(3) @map("max_attempts")
+  nextRetryAt    DateTime            @default(now()) @map("next_retry_at")
+  lastAttemptAt  DateTime?           @map("last_attempt_at")
+  retryDisabled  Boolean             @default(false) @map("retry_disabled")
+  lastError      String?             @map("last_error")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  @@index([status, nextRetryAt])
+  @@index([userId, channel])
+  @@map("notification_outbox")
+}
+
 enum NotificationType {
   CONTRIBUTION
   MILESTONE
   DEADLINE
   SYSTEM
+  REPUTATION_CHANGE
+  LEVEL_UP
+  WEEKLY_REPUTATION_SUMMARY
+  REPUTATION_MILESTONE
 }
 
 enum EmailStatus {
@@ -454,1848 +328,1158 @@ enum EmailStatus {
   FAILED
 }
 
-enum Role {
-  SUPER_ADMIN
-  TENANT_ADMIN
-  USER
-  VIEWER
-  SUPPORT_AGENT
-  SUPPORT_MANAGER
+enum NotificationChannel {
+  EMAIL
+  PUSH
 }
 
-enum TenantStatus {
-  ACTIVE
-  SUSPENDED
-  DELETED
-  ARCHIVED
-}
-
-enum TenantPlan {
-  FREE
-  STARTER
-  PROFESSIONAL
-  ENTERPRISE
-}
-
-enum ApiOveragePolicy {
-  HARD_STOP
-  BILL_OVERAGE
-}
-
-model Tenant {
-  id        String       @id @default(cuid())
-  name      String       @unique
-  slug      String       @unique
-  status    TenantStatus @default(ACTIVE)
-  plan      TenantPlan   @default(FREE)
-  metadata  Json?
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
-
-  settings             TenantSettings?
-  calls                Call[]
-  stakeLedgers         StakeLedger[]
-  claims               Claim[]
-  pools                Pool[]
-  users                User[]
-  auditLogs            TenantAuditLog[]
-  tenantMembers        TenantMember[]
-  subscription         Subscription?
-  webhookSubscriptions WebhookSubscription[]
-  webhookEvents        WebhookEvent[]
-
-  @@index([status])
-  @@map("tenants")
-}
-
-model TenantSettings {
-  id                    String           @id @default(cuid())
-  tenantId              String           @unique @map("tenant_id")
-  tenant                Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  maxUsers              Int              @default(10) @map("max_users")
-  maxProjects           Int              @default(5) @map("max_projects")
-  apiCallsPerMonthLimit Int              @default(100000) @map("api_calls_per_month_limit")
-  storageGbLimit        Int              @default(100) @map("storage_gb_limit")
-  apiOveragePolicy      ApiOveragePolicy @default(HARD_STOP) @map("api_overage_policy")
-  allowPublicProjects   Boolean          @default(true) @map("allow_public_projects")
-  notificationsEnabled  Boolean          @default(true) @map("notifications_enabled")
-  createdAt             DateTime         @default(now()) @map("created_at")
-  updatedAt             DateTime         @updatedAt @map("updated_at")
-
-  @@map("tenant_settings")
-}
-
-model TenantAuditLog {
-  id        String   @id @default(cuid())
-  tenantId  String   @map("tenant_id")
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  action    String
-  actorId   String?  @map("actor_id")
-  metadata  Json?
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([tenantId])
-  @@index([action])
-  @@map("tenant_audit_logs")
-}
-
-enum Permission {
-  // Project Permissions
-  CREATE_PROJECT
-  UPDATE_PROJECT
-  DELETE_PROJECT
-  VIEW_PROJECT
-
-  // Contribution Permissions
-  MAKE_CONTRIBUTION
-  VIEW_CONTRIBUTION
-
-  // User/Admin Permissions
-  MANAGE_USERS
-  MANAGE_ROLES
-  VIEW_SENSITIVE_DATA
-
-  // System Permissions
-  MANAGE_SYSTEM
-}
-
-model TokenBlacklist {
-  id        String   @id @default(cuid())
-  token     String   @unique // The exact JWT access token string
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@map("token_blacklist")
-}
-
-model MultiSigAccount {
-  id              String   @id @default(cuid())
-  accountId       String   @unique @map("account_id") // Stellar account ID
-  name            String?
-  thresholds      Json     // { masterWeight, lowThreshold, medThreshold, highThreshold }
-  signers         Json     // Array of { key, weight, type }
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  proposals       TransactionProposal[]
-
-  @@map("multi_sig_accounts")
-}
-
-model TransactionProposal {
-  id              String   @id @default(cuid())
-  multiSigId      String   @map("multi_sig_id")
-  multiSig        MultiSigAccount @relation(fields: [multiSigId], references: [id])
-  creatorId       String   @map("creator_id")
-  creator         User     @relation(fields: [creatorId], references: [id])
-  xdr             String   // The unsigned or partially signed base64 XDR
-  description     String?
-  status          ProposalStatus @default(PENDING)
-  expiresAt       DateTime @map("expires_at")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  signatures      ProposalSignature[]
-
-  @@map("transaction_proposals")
-}
-
-model ProposalSignature {
-  id              String   @id @default(cuid())
-  proposalId      String   @map("proposal_id")
-  proposal        TransactionProposal @relation(fields: [proposalId], references: [id])
-  signerAddress   String   @map("signer_address") // Who signed it
-  signature       String   // The actual signature part
-  createdAt       DateTime @default(now()) @map("created_at")
-
-  @@unique([proposalId, signerAddress])
-  @@map("proposal_signatures")
-}
-
-enum ProposalStatus {
+enum DeliveryStatus {
   PENDING
-  READY
-  SUBMITTED
-  EXPIRED
+  SENT
   FAILED
 }
 
-model EncryptionAuditLog {
-  id             String   @id @default(cuid())
-  keyId          String   @map("key_id")
-  userId         String?  @map("user_id")
-  action         String // ENCRYPT, DECRYPT, KEY_ROTATE, KEY_REVOKE
-  field          String?  @map("field_name")
-  table          String?  @map("table_name")
-  timestamp      DateTime @default(now())
-  ipAddress      String   @map("ip_address")
-  userAgent      String?  @map("user_agent")
-  success        Boolean  @default(false)
-  error          String?  @map("error_message")
-  processingTime Int      @map("processing_time_ms")
+// Insurance Module Models
 
-  @@index([timestamp])
-  @@index([keyId])
-  @@index([action])
-  @@index([success])
-  @@map("encryption_audit_logs")
+enum RiskType {
+  PROJECT_FAILURE
+  SMART_CONTRACT_EXPLOIT
+  MARKET_VOLATILITY
+  PARAMETRIC_WEATHER
 }
 
-model Call {
-  id          String      @id @default(uuid())
-  tenantId    String
-  description String
-  outcome     CallOutcome @default(PENDING)
-  resolvedAt  DateTime?
-  expiresAt   DateTime?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  stakes StakeLedger[]
-
-  @@index([tenantId, id])
-  @@index([tenantId, outcome])
-  @@index([tenantId, createdAt])
-  @@index([tenantId, expiresAt])
-  @@map("calls")
-}
-
-model StakeLedger {
-  id               String           @id @default(uuid())
-  tenantId         String
-  callId           String
-  userAddress      String
-  amount           Decimal          @db.Decimal(18, 4)
-  position         Position
-  profitLoss       Decimal?         @db.Decimal(18, 4)
-  transactionHash  String?
-  resolutionStatus ResolutionStatus @default(PENDING)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  call   Call   @relation(fields: [callId], references: [id], onDelete: Restrict)
-
-  @@unique([tenantId, transactionHash])
-  @@index([tenantId, id])
-  @@index([tenantId, callId])
-  @@index([tenantId, userAddress])
-  @@index([tenantId, createdAt])
-  @@map("stake_ledger")
-}
-
-model Claim {
-  id          String      @id @default(uuid())
-  tenantId    String
-  poolId      String?
-  userAddress String
-  amount      Decimal     @db.Decimal(18, 4)
-  status      ClaimStatus @default(PENDING)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  pool   Pool?  @relation(fields: [poolId], references: [id], onDelete: SetNull)
-
-  @@index([tenantId, id])
-  @@index([tenantId, poolId])
-  @@index([tenantId, status])
-  @@index([tenantId, createdAt])
-  @@index([tenantId, userAddress])
-  @@map("claims")
-}
-
-model Pool {
-  id                 String   @id @default(uuid())
-  tenantId           String
-  name               String
-  totalCapacity      Decimal  @default(0) @db.Decimal(18, 4)
-  lockedAmount       Decimal  @default(0) @db.Decimal(18, 4)
-  availableLiquidity Decimal  @default(0) @db.Decimal(18, 4)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  claims Claim[]
-
-  @@unique([tenantId, name])
-  @@index([tenantId, id])
-  @@index([tenantId, name])
-  @@index([tenantId, createdAt])
-  @@map("pools")
-}
-
-enum CallOutcome {
-  YES
-  NO
-  PENDING
-}
-
-enum Position {
-  YES
-  NO
-}
-
-enum ResolutionStatus {
-  PENDING
-  RESOLVED
-}
-
-enum ClaimStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
-model TenantMember {
-  id        String     @id @default(uuid())
-  tenantId  String
-  userId    String
-  role      TenantRole @default(MEMBER)
-  createdAt DateTime   @default(now())
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([tenantId, userId])
-  @@index([tenantId, role])
-  @@map("tenant_members")
-}
-
-enum TenantRole {
-  OWNER
-  ADMIN
-  MEMBER
-}
-
-// ─── Centralized Config Management ───────────────────────────────────────────
-
-model ConfigEntry {
-  id        String      @id @default(uuid())
-  key       String
-  value     String
-  scope     ConfigScope @default(GLOBAL)
-  tenantId  String?     @map("tenant_id")
-  userId    String?     @map("user_id")
-  encrypted Boolean     @default(false)
-  createdAt DateTime    @default(now()) @map("created_at")
-  updatedAt DateTime    @updatedAt @map("updated_at")
-
-  @@unique([key, scope, tenantId, userId])
-  @@index([scope, tenantId])
-  @@index([key])
-  @@map("config_entries")
-}
-
-model FeatureFlag {
-  id         String   @id @default(uuid())
-  key        String
-  enabled    Boolean  @default(false)
-  tenantId   String?  @map("tenant_id")
-  rolloutPct Int      @default(100) @map("rollout_pct")
-  metadata   Json?
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-
-  @@unique([key, tenantId])
-  @@index([key])
-  @@index([tenantId])
-  @@map("feature_flags")
-}
-
-model Experiment {
-  id              String      @id @default(uuid())
-  name            String
-  description     String?
-  key             String      @unique
-  status          ExperimentStatus @default(DRAFT)
-  trafficCoverage Int         @default(100) @map("traffic_coverage")
-  controlSize     Int         @default(50) @map("control_size")
-  startDate       DateTime?   @map("start_date")
-  endDate         DateTime?   @map("end_date")
-  metricName      String      @map("metric_name")
-  metadata        Json?
-  tenantId        String?     @map("tenant_id")
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
-
-  assignments     ExperimentAssignment[]
-  events          ExperimentEvent[]
-
-  @@index([key])
-  @@index([tenantId])
-  @@map("experiments")
-}
-
-enum ExperimentStatus {
-  DRAFT
-  ACTIVE
-  PAUSED
-  COMPLETED
-  ARCHIVED
-}
-
-model ExperimentAssignment {
-  id           String     @id @default(uuid())
-  experimentId String     @map("experiment_id")
-  userId       String     @map("user_id")
-  variant      ExperimentVariant
-  assignedAt   DateTime   @default(now()) @map("assigned_at")
-
-  experiment   Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([experimentId, userId])
-  @@index([userId])
-  @@map("experiment_assignments")
-}
-
-enum ExperimentVariant {
-  CONTROL
-  TREATMENT
-}
-
-model ExperimentEvent {
-  id           String   @id @default(uuid())
-  experimentId String   @map("experiment_id")
-  userId       String   @map("user_id")
-  eventName    String   @map("event_name")
-  value        Float?   @default(1.0)
-  metadata     Json?
-  timestamp    DateTime @default(now())
-
-  experiment   Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
-
-  @@index([experimentId, eventName])
-  @@index([userId])
-  @@map("experiment_events")
-}
-
-model ConfigAuditLog {
-  id        String      @id @default(uuid())
-  key       String
-  oldValue  String?     @map("old_value")
-  newValue  String?     @map("new_value")
-  scope     ConfigScope
-  tenantId  String?     @map("tenant_id")
-  actorId   String?     @map("actor_id")
-  action    String // SET, DELETE, ROTATE_SECRET
-  createdAt DateTime    @default(now()) @map("created_at")
-
-  @@index([key])
-  @@index([tenantId])
-  @@index([createdAt])
-  @@map("config_audit_logs")
-}
-
-model WebhookSubscription {
-  id              String                    @id @default(uuid())
-  tenantId        String?                   @map("tenant_id")
-  name            String
-  description     String?
-  url             String
-  secret          String
-  status          WebhookSubscriptionStatus @default(ACTIVE)
-  eventFilters    Json                      @map("event_filters")
-  payloadFields   Json?                     @map("payload_fields")
-  customHeaders   Json?                     @map("custom_headers")
-  createdBy       String?                   @map("created_by")
-  lastTriggeredAt DateTime?                 @map("last_triggered_at")
-  createdAt       DateTime                  @default(now()) @map("created_at")
-  updatedAt       DateTime                  @updatedAt @map("updated_at")
-
-  tenant     Tenant?           @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  deliveries WebhookDelivery[]
-
-  @@index([tenantId, status])
-  @@index([status])
-  @@map("webhook_subscriptions")
-}
-
-model WebhookEvent {
-  id         String   @id @default(uuid())
-  tenantId   String?  @map("tenant_id")
-  eventType  String   @map("event_type")
-  source     String   @default("platform")
-  payload    Json
-  metadata   Json?
-  occurredAt DateTime @default(now()) @map("occurred_at")
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  tenant     Tenant?           @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  deliveries WebhookDelivery[]
-
-  @@index([tenantId, eventType])
-  @@index([eventType, occurredAt])
-  @@map("webhook_events")
-}
-
-model WebhookDelivery {
-  id               String                @id @default(uuid())
-  subscriptionId   String                @map("subscription_id")
-  eventId          String                @map("event_id")
-  status           WebhookDeliveryStatus @default(PENDING)
-  attempts         Int                   @default(0)
-  maxAttempts      Int                   @default(10) @map("max_attempts")
-  nextAttemptAt    DateTime              @default(now()) @map("next_attempt_at")
-  lastAttemptAt    DateTime?             @map("last_attempt_at")
-  deliveredAt      DateTime?             @map("delivered_at")
-  lastResponseCode Int?                  @map("last_response_code")
-  lastResponseBody String?               @map("last_response_body")
-  errorMessage     String?               @map("error_message")
-  signature        String?               @map("signature")
-  createdAt        DateTime              @default(now()) @map("created_at")
-  updatedAt        DateTime              @updatedAt @map("updated_at")
-
-  subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  event        WebhookEvent        @relation(fields: [eventId], references: [id], onDelete: Cascade)
-
-  @@index([status, nextAttemptAt])
-  @@index([subscriptionId, status])
-  @@index([eventId])
-  @@map("webhook_deliveries")
-}
-
-enum ConfigScope {
-  GLOBAL
-  TENANT
-  USER
-}
-
-model AuditLog {
-  id            String      @id @default(uuid())
-  correlationId String?     @map("correlation_id")
-  tenantId      String?     @map("tenant_id")
-  userId        String?     @map("user_id")
-  action        AuditAction
-  entityType    String      @map("entity_type")
-  entityId      String?     @map("entity_id")
-  method        String? // HTTP method (GET, POST, PUT, DELETE)
-  path          String? // Request path
-  statusCode    Int?        @map("status_code")
-  ipAddress     String?     @map("ip_address")
-  userAgent     String?     @map("user_agent")
-  requestBody   Json?       @map("request_body")
-  responseBody  Json?       @map("response_body")
-  previousState Json?       @map("previous_state")
-  newState      Json?       @map("new_state")
-  changedFields String[]    @map("changed_fields")
-  metadata      Json?
-  duration      Int? // Duration in milliseconds
-  errorMessage  String?     @map("error_message")
-  checksum      String? // SHA-256 hash for tamper detection
-  createdAt     DateTime    @default(now()) @map("created_at")
-
-  @@index([tenantId, createdAt])
-  @@index([userId, createdAt])
-  @@index([entityType, entityId])
-  @@index([action])
-  @@index([correlationId])
-  @@index([createdAt])
-  @@index([statusCode])
-  @@map("audit_logs")
-}
-
-enum AuditAction {
-  CREATE
-  READ
-  UPDATE
-  DELETE
-  LOGIN
-  LOGOUT
-  EXPORT
-  IMPORT
-  SYSTEM_EVENT
-  API_CALL
-  ERROR
-  ACCESS_DENIED
-  DATA_CHANGE
-}
-
-model AuditRetentionPolicy {
-  id              String    @id @default(uuid())
-  name            String    @unique
-  tenantId        String?   @map("tenant_id")
-  retentionDays   Int       @default(90) @map("retention_days")
-  entityTypes     String[]  @map("entity_types")
-  actions         String[] // AuditAction values to apply policy to
-  archiveEnabled  Boolean   @default(false) @map("archive_enabled")
-  archiveLocation String?   @map("archive_location")
-  isActive        Boolean   @default(true) @map("is_active")
-  lastExecutedAt  DateTime? @map("last_executed_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-
-  @@index([tenantId])
-  @@index([isActive])
-  @@map("audit_retention_policies")
-}
-
-// ─── Payment System Models ───────────────────────────────────────────────────
-
-enum SubscriptionStatus {
-  ACTIVE
-  CANCELLED
-  PAST_DUE
-  UNPAID
-  TRIALING
-  PAUSED
-}
-
-enum InvoiceStatus {
-  DRAFT
-  OPEN
-  PAID
-  UNCOLLECTIBLE
-  VOID
-}
-
-enum PaymentEventType {
-  SUBSCRIPTION_CREATED
-  SUBSCRIPTION_UPDATED
-  SUBSCRIPTION_CANCELLED
-  INVOICE_CREATED
-  INVOICE_PAID
-  INVOICE_PAYMENT_FAILED
-  PAYMENT_METHOD_ATTACHED
-  PAYMENT_METHOD_DETACHED
-  USAGE_RECORDED
-  DUNNING_STARTED
-  DUNNING_RESOLVED
-  DUNNING_FAILED
-}
-
-model SubscriptionPlan {
-  id            String   @id @default(uuid())
-  name          String   @unique
-  description   String?
-  stripePriceId String   @unique @map("stripe_price_id")
-  amount        Int // Amount in cents
-  currency      String   @default("usd")
-  interval      String   @default("month") // month, year
-  features      Json? // Feature flags and limits
-  isActive      Boolean  @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  subscriptions Subscription[]
-
-  @@map("subscription_plans")
-}
-
-model Subscription {
-  id                   String             @id @default(uuid())
-  tenantId             String             @unique @map("tenant_id")
-  tenant               Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  planId               String             @map("plan_id")
-  plan                 SubscriptionPlan   @relation(fields: [planId], references: [id])
-  stripeSubscriptionId String             @unique @map("stripe_subscription_id")
-  stripeCustomerId     String             @map("stripe_customer_id")
-  status               SubscriptionStatus @default(TRIALING)
-  currentPeriodStart   DateTime           @map("current_period_start")
-  currentPeriodEnd     DateTime           @map("current_period_end")
-  cancelAtPeriodEnd    Boolean            @default(false) @map("cancel_at_period_end")
-  canceledAt           DateTime?          @map("canceled_at")
-  trialStart           DateTime?          @map("trial_start")
-  trialEnd             DateTime?          @map("trial_end")
-  createdAt            DateTime           @default(now()) @map("created_at")
-  updatedAt            DateTime           @updatedAt @map("updated_at")
-
-  invoices            Invoice[]
-  usageRecords        UsageRecord[]
-  paymentEvents       PaymentEvent[]
-  dunningAttempts     DunningAttempt[]
-  revenueRecognitions RevenueRecognition[]
-  prorationAdjustments ProrationAdjustment[]
-  billingCycleAnchor  DateTime?          @map("billing_cycle_anchor")
-
-  @@index([tenantId])
-  @@index([status])
-  @@index([stripeCustomerId])
-  @@map("subscriptions")
-}
-
-model UsageRecord {
-  id                  String       @id @default(uuid())
-  subscriptionId      String       @map("subscription_id")
-  subscription        Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  tenantId            String       @map("tenant_id")
-  metricName          String       @map("metric_name") // api_calls, storage_gb, compute_hours
-  quantity            Int
-  timestamp           DateTime     @default(now())
-  stripeUsageRecordId String?      @map("stripe_usage_record_id")
-  createdAt           DateTime     @default(now()) @map("created_at")
-
-  @@index([subscriptionId])
-  @@index([tenantId])
-  @@index([metricName])
-  @@index([timestamp])
-  @@map("usage_records")
-}
-
-model Invoice {
-  id               String        @id @default(uuid())
-  subscriptionId   String        @map("subscription_id")
-  subscription     Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  tenantId         String        @map("tenant_id")
-  stripeInvoiceId  String        @unique @map("stripe_invoice_id")
-  status           InvoiceStatus @default(DRAFT)
-  amountDue        Int           @map("amount_due") // in cents
-  amountPaid       Int           @default(0) @map("amount_paid")
-  currency         String        @default("usd")
-  pdfUrl           String?       @map("pdf_url")
-  hostedInvoiceUrl String?       @map("hosted_invoice_url")
-  invoiceNumber    String?       @map("invoice_number")
-  dueDate          DateTime?     @map("due_date")
-  paidAt           DateTime?     @map("paid_at")
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
-
-  revenueRecognitions RevenueRecognition[]
-
-  @@index([subscriptionId])
-  @@index([tenantId])
-  @@index([status])
-  @@index([createdAt])
-  @@map("invoices")
-}
-
-model PaymentMethod {
-  id                    String   @id @default(uuid())
-  tenantId              String   @unique @map("tenant_id")
-  stripePaymentMethodId String   @unique @map("stripe_payment_method_id")
-  type                  String // card, bank_transfer, etc.
-  brand                 String? // visa, mastercard, etc.
-  last4                 String?
-  expMonth              Int?     @map("exp_month")
-  expYear               Int?     @map("exp_year")
-  isDefault             Boolean  @default(true) @map("is_default")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
-
-  @@index([tenantId])
-  @@map("payment_methods")
-}
-
-model PaymentEvent {
-  id             String           @id @default(uuid())
-  subscriptionId String?          @map("subscription_id")
-  subscription   Subscription?    @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-  tenantId       String           @map("tenant_id")
-  eventType      PaymentEventType @map("event_type")
-  stripeEventId  String?          @map("stripe_event_id")
-  metadata       Json?
-  createdAt      DateTime         @default(now()) @map("created_at")
-
-  @@index([subscriptionId])
-  @@index([tenantId])
-  @@index([eventType])
-  @@index([createdAt])
-  @@map("payment_events")
-}
-
-model DunningAttempt {
-  id             String       @id @default(uuid())
-  subscriptionId String       @map("subscription_id")
-  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  tenantId       String       @map("tenant_id")
-  invoiceId      String       @map("invoice_id")
-  attemptNumber  Int          @map("attempt_number")
-  status         String // pending, succeeded, failed
-  nextRetryAt    DateTime?    @map("next_retry_at")
-  emailSentAt    DateTime?    @map("email_sent_at")
-  resolvedAt     DateTime?    @map("resolved_at")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
-
-  @@index([subscriptionId])
-  @@index([tenantId])
-  @@index([status])
-  @@index([nextRetryAt])
-  @@map("dunning_attempts")
-}
-
-enum WebhookSubscriptionStatus {
-  ACTIVE
-  PAUSED
-  DISABLED
-}
-
-enum WebhookDeliveryStatus {
-  PENDING
-  RETRYING
-  DELIVERED
-  FAILED
-}
-
-enum AbiRegistryStatus {
-  ACTIVE
-  DEPRECATED
-  ARCHIVED
-}
-
-// ─── Support Tools Models ──────────────────────────────────────────────────────
-
-model SupportNote {
-  id          String   @id @default(cuid())
-  userId      String   @map("user_id")
-  authorId    String   @map("author_id")
-  content     String
-  type        NoteType @default(GENERAL)
-  isInternal  Boolean  @default(false) @map("is_internal")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  @@map("support_notes")
-}
-
-model SupportAction {
-  id            String        @id @default(cuid())
-  userId        String        @map("user_id")
-  agentId       String        @map("agent_id")
-  actionType    ActionType    @map("action_type")
-  description   String
-  metadata      Json?
-  ipAddress     String?       @map("ip_address")
-  userAgent     String?       @map("user_agent")
-  createdAt     DateTime      @default(now()) @map("created_at")
-
-  @@map("support_actions")
-}
-
-model ManualAdjustment {
-  id              String              @id @default(cuid())
-  userId          String              @map("user_id")
-  agentId         String              @map("agent_id")
-  adjustmentType  AdjustmentType      @map("adjustment_type")
-  amount          Decimal?            @db.Decimal(18, 4)
-  currency        String              @default("USD")
-  reason          String
-  referenceId     String?             @map("reference_id")
-  referenceType   String?             @map("reference_type")
-  status          AdjustmentStatus    @default(PENDING)
-  approvedById    String?             @map("approved_by_id")
-  approvedAt      DateTime?           @map("approved_at")
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
-
-  @@map("manual_adjustments")
-}
-
-model ZendeskTicket {
-  id            String            @id @default(cuid())
-  ticketId      Int               @unique @map("ticket_id")
-  userId        String?           @map("user_id")
-  subject       String
-  description   String
-  status        ZendeskStatus     @default(OPEN)
-  priority      ZendeskPriority   @default(NORMAL)
-  assigneeId    String?           @map("assignee_id")
-  metadata      Json?
-  createdAt     DateTime          @default(now()) @map("created_at")
-  updatedAt     DateTime          @updatedAt @map("updated_at")
-
-  @@map("zendesk_tickets")
-}
-
-enum NoteType {
-  GENERAL
-  WARNING
-  SUSPICIOUS_ACTIVITY
-  COMPLIMENT
-  ESCALATION
-}
-
-enum ActionType {
-  ACCOUNT_LOCK
-  ACCOUNT_UNLOCK
-  PASSWORD_RESET
-  EMAIL_VERIFICATION
-  PHONE_VERIFICATION
-  IMPERSONATION_START
-  IMPERSONATION_END
-  MANUAL_ADJUSTMENT
-  NOTE_ADDED
-  ESCALATION
-}
-
-enum AdjustmentType {
-  CREDIT
-  DEBIT
-  REFUND
-  BONUS
-  PENALTY
-}
-
-enum AdjustmentStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  PROCESSED
-  FAILED
-}
-
-enum ZendeskStatus {
-  OPEN
-  PENDING
-  SOLVED
-  CLOSED
-}
-
-enum ZendeskPriority {
+enum PoolRiskLevel {
   LOW
-  NORMAL
-  HIGH
-  URGENT
-}
-
-model VerificationSession {
-  id              String             @id @default(cuid())
-  userId          String             @map("user_id")
-  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status          VerificationStatus @default(PENDING)
-  documentType    DocumentType?      @map("document_type")
-  documentUrl     String?            @map("document_url")
-  selfieUrl       String?            @map("selfie_url")
-  ocrData         Json?              @map("ocr_data")
-  faceMatchScore  Float?             @map("face_match_score")
-  livenessScore   Float?             @map("liveness_score")
-  failureReason   String?            @map("failure_reason")
-  manualReviewBy  String?            @map("manual_review_by")
-  manualReviewAt  DateTime?          @map("manual_review_at")
-  manualNote      String?            @map("manual_note")
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updatedAt       DateTime           @updatedAt @map("updated_at")
-
-  @@index([userId])
-  @@index([status])
-  @@map("verification_sessions")
-}
-
-enum VerificationStatus {
-  PENDING
-  PROCESSING
-  VERIFIED
-  REJECTED
-  MANUAL_REVIEW
-}
-
-enum DocumentType {
-  PASSPORT
-  DRIVERS_LICENSE
-  NATIONAL_ID
-}
-
-model RevenueRecognition {
-  id              String   @id @default(uuid())
-  subscriptionId  String   @map("subscription_id")
-  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  tenantId        String   @map("tenant_id")
-  invoiceId       String   @map("invoice_id")
-  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  amount          Int      @map("amount") // Amount in cents recognized
-  currency        String   @default("usd")
-  recognitionDate DateTime @map("recognition_date")
-  periodStart     DateTime @map("period_start")
-  periodEnd       DateTime @map("period_end")
-  createdAt       DateTime @default(now()) @map("created_at")
-
-  @@index([subscriptionId])
-  @@index([tenantId])
-  @@index([recognitionDate])
-  @@map("revenue_recognitions")
-}
-
-model ProrationAdjustment {
-  id              String   @id @default(uuid())
-  subscriptionId  String   @map("subscription_id")
-  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  tenantId        String   @map("tenant_id")
-  amount          Int      @map("amount") // Amount in cents (can be negative for credits)
-  currency        String   @default("usd")
-  description     String?
-  originalPlanId  String   @map("original_plan_id")
-  newPlanId       String   @map("new_plan_id")
-  appliedAt       DateTime @default(now()) @map("applied_at")
-  metadata        Json?
-
-  @@index([subscriptionId])
-  @@index([tenantId])
-  @@map("proration_adjustments")
-// ─── Behavioral Analytics Models ──────────────────────────────────────────────
-
-model AnalyticsEvent {
-  id          String   @id @default(cuid())
-  userId      String?  @map("user_id")
-  sessionId   String?  @map("session_id")
-  eventType   String   @map("event_type")
-  eventName   String   @map("event_name")
-  properties  Json?
-  page        String?
-  anonymized  Boolean  @default(false)
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  @@index([userId])
-  @@index([eventType])
-  @@index([eventName])
-  @@index([createdAt])
-  @@map("analytics_events")
-}
-
-model AnalyticsOptOut {
-  id         String   @id @default(cuid())
-  userId     String   @unique @map("user_id")
-  optedOutAt DateTime @default(now()) @map("opted_out_at")
-
-  @@map("analytics_opt_outs")
-}
-
-// ─── Token Vesting Models ──────────────────────────────────────────────────────
-
-model VestingSchedule {
-  id                 String    @id @default(cuid())
-  recipientAddress   String    @map("recipient_address")
-  totalAmount        Decimal   @db.Decimal(18, 4) @map("total_amount")
-  vestedAmount       Decimal   @default(0) @db.Decimal(18, 4) @map("vested_amount")
-  scheduleType       String    @map("schedule_type")
-  cliffMonths        Int       @map("cliff_months")
-  startDate          DateTime  @map("start_date")
-  endDate            DateTime  @map("end_date")
-  status             String    @default("active")
-  terminationDate    DateTime? @map("termination_date")
-  terminationReason  String?   @map("termination_reason")
-  accelerationReason String?   @map("acceleration_reason")
-  acceleratedAt      DateTime? @map("accelerated_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-
-  milestones VestingMilestone[]
-  events     VestingEvent[]
-
-  @@index([recipientAddress])
-  @@index([status])
-  @@map("vesting_schedules")
-}
-
-model VestingMilestone {
-  id            String          @id @default(cuid())
-  scheduleId    String          @map("schedule_id")
-  schedule      VestingSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
-  milestoneDate DateTime        @map("milestone_date")
-  percentage    Decimal         @db.Decimal(5, 4)
-  description   String?
-  achieved      Boolean         @default(false)
-  achievedAt    DateTime?       @map("achieved_at")
-
-  @@index([scheduleId])
-  @@map("vesting_milestones")
-}
-
-model VestingEvent {
-  id              String          @id @default(cuid())
-  scheduleId      String          @map("schedule_id")
-  schedule        VestingSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
-  eventType       String          @map("event_type")
-  amount          Decimal         @db.Decimal(18, 4)
-  tokenPrice      Decimal?        @db.Decimal(18, 4) @map("token_price")
-  taxableIncome   Decimal?        @db.Decimal(18, 4) @map("taxable_income")
-  transactionHash String?         @map("transaction_hash")
-  createdAt       DateTime        @default(now()) @map("created_at")
-
-  @@index([scheduleId])
-  @@index([eventType])
-  @@index([createdAt])
-  @@map("vesting_events")
-}
-
-// ─── Synthetic Monitoring Models ──────────────────────────────────────────────
-
-model SyntheticTestResult {
-  id           String   @id @default(cuid())
-  testName     String   @map("test_name")
-  location     String
-  durationMs   Int      @map("duration_ms")
-  success      Boolean
-  errorMessage String?  @map("error_message")
-  statusCode   Int?     @map("status_code")
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  @@index([testName])
-  @@index([location])
-  @@index([createdAt])
-  @@index([success])
-  @@map("synthetic_test_results")
-}
-
-// ─── Liquidity Mining Models ─────────────────────────────────────────────────
-
-model LiquidityMiningPair {
-  id                      String   @id @default(cuid())
-  pairId                  Int      @unique @map("pair_id")
-  pairSymbol              String   @map("pair_symbol") // e.g., "USDC_STELLAR"
-  emissionsPerBlock       Decimal  @db.Decimal(18, 4) @map("emissions_per_block")
-  totalAllocated          Decimal  @db.Decimal(18, 4) @map("total_allocated")
-  accumulatedRewardPerShare Decimal @default(0) @db.Decimal(18, 4) @map("accumulated_reward_per_share")
-  lastUpdateBlock         BigInt   @map("last_update_block")
-  active                  Boolean  @default(true)
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
-
-  lpStakes           LPStake[]
-  rewardDistributions LiquidityReward[]
-
-  @@index([pairId])
-  @@index([active])
-  @@index([pairSymbol])
-  @@map("liquidity_mining_pairs")
-}
-
-model LPStake {
-  id                    String @id @default(cuid())
-  userAddress           String @map("user_address")
-  pairId                Int    @map("pair_id")
-  pair                  LiquidityMiningPair @relation(fields: [pairId], references: [pairId], onDelete: Cascade)
-  lpBalance             Decimal @db.Decimal(18, 4) @map("lp_balance")
-  startTimestamp        DateTime @map("start_timestamp")
-  rewardDebt            Decimal @default(0) @db.Decimal(18, 4) @map("reward_debt")
-  bonusMultiplierTier   Int @default(0) @map("bonus_multiplier_tier") // 0=1x, 1=2x, 2=3x, 3=5x
-  lockedUntil           DateTime? @map("locked_until")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
-
-  rewards GovernanceLock[]
-
-  @@unique([userAddress, pairId])
-  @@index([userAddress])
-  @@index([pairId])
-  @@index([bonusMultiplierTier])
-  @@index([lockedUntil])
-  @@map("lp_stakes")
-}
-
-model LiquidityReward {
-  id                  String @id @default(cuid())
-  userAddress         String @map("user_address")
-  pairId              Int    @map("pair_id")
-  pair                LiquidityMiningPair @relation(fields: [pairId], references: [pairId], onDelete: Cascade)
-  rewardAmount        Decimal @db.Decimal(18, 4) @map("reward_amount")
-  bonusMultiplier     Decimal @default(1.0) @db.Decimal(5, 2) @map("bonus_multiplier")
-  finalRewardAmount   Decimal @db.Decimal(18, 4) @map("final_reward_amount")
-  claimedAt           DateTime @map("claimed_at")
-  transactionHash     String? @map("transaction_hash")
-  blockNumber         BigInt? @map("block_number")
-  createdAt           DateTime @default(now()) @map("created_at")
-
-  @@index([userAddress])
-  @@index([pairId])
-  @@index([claimedAt])
-  @@index([userAddress, pairId])
-  @@map("liquidity_rewards")
-}
-
-model GovernanceLock {
-  id                  String @id @default(cuid())
-  userAddress         String @map("user_address")
-  lpStakeId           String @map("lp_stake_id")
-  lpStake             LPStake @relation(fields: [lpStakeId], references: [id], onDelete: Cascade)
-  governancePower     Decimal @db.Decimal(18, 4) @map("governance_power")
-  lockupDuration      Int @map("lockup_duration") // in days
-  lockedUntil         DateTime @map("locked_until")
-  released            Boolean @default(false)
-  releasedAt          DateTime? @map("released_at")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
-
-  @@index([userAddress])
-  @@index([lpStakeId])
-  @@index([lockedUntil])
-  @@index([released])
-  @@map("governance_locks")
-}
-
-model LiquidityMiningEvent {
-  id                  String @id @default(cuid())
-  userAddress         String @map("user_address")
-  eventType           String @map("event_type") // "provide_liquidity", "withdraw_liquidity", "claim_reward", "lock_governance"
-  pairId              Int? @map("pair_id")
-  amount              Decimal? @db.Decimal(18, 4)
-  metadata            Json? // Additional event data
-  transactionHash     String? @map("transaction_hash")
-  blockNumber         BigInt? @map("block_number")
-  createdAt           DateTime @default(now()) @map("created_at")
-
-  @@index([userAddress])
-  @@index([eventType])
-  @@index([pairId])
-  @@index([createdAt])
-  @@map("liquidity_mining_events")
-}
-
-// ─── Predictive Maintenance Models ───────────────────────────────────────────
-
-model SystemMetric {
-  id                String   @id @default(cuid())
-  metricType        String   @map("metric_type") // "cpu", "memory", "disk", "connections", "network", "latency"
-  metricName        String   @map("metric_name") // specific metric name
-  value             Float
-  unit              String   @default("") // "percent", "bytes", "count", "ms", etc.
-  tags              Json?    // additional metadata (host, region, service, etc.)
-  collectedAt       DateTime @default(now()) @map("collected_at")
-
-  predictions       MetricPrediction[]
-
-  @@index([metricType])
-  @@index([metricName])
-  @@index([collectedAt])
-  @@index([metricType, collectedAt])
-  @@map("system_metrics")
-}
-
-model MetricPrediction {
-  id                String   @id @default(cuid())
-  systemMetricId    String   @map("system_metric_id")
-  predictionType    String   @map("prediction_type") // "anomaly", "capacity", "failure"
-  predictedValue    Float?   @map("predicted_value")
-  confidenceScore   Float    @map("confidence_score") // 0-1
-  predictionWindow  Int      @map("prediction_window") // hours until predicted event
-  thresholdValue    Float?   @map("threshold_value") // the threshold that will be breached
-  riskLevel         String   @map("risk_level") // "low", "medium", "high", "critical"
-  explanation       String?  // ML model explanation
-  createdAt         DateTime @default(now()) @map("created_at")
-
-  systemMetric      SystemMetric @relation(fields: [systemMetricId], references: [id], onDelete: Cascade)
-  maintenanceTicket MaintenanceTicket?
-
-  @@index([systemMetricId])
-  @@index([predictionType])
-  @@index([riskLevel])
-  @@index([createdAt])
-  @@map("metric_predictions")
-}
-
-model MaintenanceTicket {
-  id                String   @id @default(cuid())
-  predictionId      String   @unique @map("prediction_id")
-  title             String
-  description       String
-  priority          String   // "low", "medium", "high", "critical"
-  status            String   @default("open") // "open", "in_progress", "resolved", "closed"
-  assignedTo        String?  @map("assigned_to")
-  estimatedEffort   Int?     @map("estimated_effort") // hours
-  actualEffort      Int?     @map("actual_effort") // hours
-  resolutionNotes   String?  @map("resolution_notes")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-  resolvedAt        DateTime? @map("resolved_at")
-
-  prediction        MetricPrediction @relation(fields: [predictionId], references: [id], onDelete: Cascade)
-  notifications     MaintenanceNotification[]
-
-  @@index([status])
-  @@index([priority])
-  @@index([createdAt])
-  @@map("maintenance_tickets")
-}
-
-model MaintenanceNotification {
-  id                String   @id @default(cuid())
-  ticketId          String   @map("ticket_id")
-  notificationType  String   @map("notification_type") // "slack", "pagerduty", "email"
-  recipient         String   // channel, email, or service
-  message           String
-  status            String   @default("pending") // "pending", "sent", "failed"
-  sentAt            DateTime? @map("sent_at")
-  errorMessage      String?  @map("error_message")
-  createdAt         DateTime @default(now()) @map("created_at")
-
-  ticket            MaintenanceTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-
-  @@index([ticketId])
-  @@index([notificationType])
-  @@index([status])
-  @@map("maintenance_notifications")
-}
-
-model MLModel {
-  id                String   @id @default(cuid())
-  modelName         String   @unique @map("model_name")
-  modelType         String   @map("model_type") // "anomaly_detection", "forecasting", "classification"
-  version           String
-  accuracy          Float?   // model accuracy score
-  parameters        Json?    // model hyperparameters
-  trainingDataStart DateTime? @map("training_data_start")
-  trainingDataEnd   DateTime? @map("training_data_end")
-  lastTrainedAt     DateTime? @map("last_trained_at")
-  isActive          Boolean  @default(true) @map("is_active")
-  createdAt         DateTime @default(now()) @map("created_at")
-
-  @@index([modelType])
-  @@index([isActive])
-  @@map("ml_models")
-}
-
-// Secrets Management Models
-model Secret {
-  id                String   @id @default(cuid())
-  secretName        String   @unique @map("secret_name") // AWS Secrets Manager name
-  secretType        String   @map("secret_type") // "database", "api_key", "jwt", "stripe", "twilio", etc.
-  description       String?
-  rotationSchedule  String   @map("rotation_schedule") // "30d", "90d", "never"
-  lastRotatedAt     DateTime? @map("last_rotated_at")
-  nextRotationAt    DateTime? @map("next_rotation_at")
-  isActive          Boolean  @default(true) @map("is_active")
-  emergencyRevoked  Boolean  @default(false) @map("emergency_revoked")
-  revokedAt         DateTime? @map("revoked_at")
-  revokedBy         String?  @map("revoked_by")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  versions          SecretVersion[]
-  accessLogs        SecretAccessLog[]
-  rotationHistory   SecretRotation[]
-
-  @@index([secretType])
-  @@index([isActive])
-  @@index([nextRotationAt])
-  @@index([emergencyRevoked])
-  @@map("secrets")
-}
-
-model SecretVersion {
-  id                String   @id @default(cuid())
-  secretId          String   @map("secret_id")
-  versionId         String   @unique @map("version_id") // AWS version ID
-  versionStage      String   @map("version_stage") // "AWSCURRENT", "AWSPREVIOUS", etc.
-  secretValue       Json     @map("secret_value") // Encrypted secret data
-  createdAt         DateTime @default(now()) @map("created_at")
-  expiresAt         DateTime? @map("expires_at")
-
-  secret            Secret   @relation(fields: [secretId], references: [id], onDelete: Cascade)
-
-  @@index([secretId])
-  @@index([versionStage])
-  @@map("secret_versions")
-}
-
-model SecretAccessLog {
-  id                String   @id @default(cuid())
-  secretId          String   @map("secret_id")
-  accessedBy        String   @map("accessed_by") // service name, user ID, or IP
-  accessType        String   @map("access_type") // "read", "write", "rotate", "revoke"
-  accessMethod      String   @map("access_method") // "api", "sdk", "console"
-  ipAddress         String?  @map("ip_address")
-  userAgent         String?  @map("user_agent")
-  success           Boolean  @default(true)
-  errorMessage      String?  @map("error_message")
-  accessedAt        DateTime @default(now()) @map("accessed_at")
-
-  secret            Secret   @relation(fields: [secretId], references: [id], onDelete: Cascade)
-
-  @@index([secretId])
-  @@index([accessedBy])
-  @@index([accessType])
-  @@index([accessedAt])
-  @@index([success])
-  @@map("secret_access_logs")
-}
-
-model SecretRotation {
-  id                String   @id @default(cuid())
-  secretId          String   @map("secret_id")
-  rotationType      String   @map("rotation_type") // "scheduled", "manual", "emergency"
-  oldVersionId      String?  @map("old_version_id")
-  newVersionId      String   @map("new_version_id")
-  initiatedBy       String   @map("initiated_by") // service or user
-  reason            String?  // reason for rotation
-  success           Boolean  @default(true)
-  errorMessage      String?  @map("error_message")
-  rotatedAt         DateTime @default(now()) @map("rotated_at")
-
-  secret            Secret   @relation(fields: [secretId], references: [id], onDelete: Cascade)
-
-  @@index([secretId])
-  @@index([rotationType])
-  @@index([rotatedAt])
-  @@index([success])
-  @@map("secret_rotations")
-}
-
-model SecretAlert {
-  id                String   @id @default(cuid())
-  secretId          String?  @map("secret_id")
-  alertType         String   @map("alert_type") // "unusual_access", "rotation_failed", "secret_expired", "emergency_revoked"
-  severity          String   @map("severity") // "low", "medium", "high", "critical"
-  message           String
-  details           Json?    // additional alert data
-  resolved          Boolean  @default(false)
-  resolvedAt        DateTime? @map("resolved_at")
-  resolvedBy        String?  @map("resolved_by")
-  createdAt         DateTime @default(now()) @map("created_at")
-
-  secret            Secret?  @relation(fields: [secretId], references: [id])
-
-  @@index([secretId])
-  @@index([alertType])
-  @@index([severity])
-  @@index([resolved])
-  @@index([createdAt])
-  @@map("secret_alerts")
-}
-
-// Blockchain Transaction Queue Models
-enum TransactionQueuePriority {
-  LOW
-  NORMAL
+  MEDIUM
   HIGH
   CRITICAL
 }
 
-enum TransactionQueueStatus {
-  QUEUED
-  PROCESSING
-  SUBMITTED
-  STUCK
-  CONFIRMED
-  FAILED
+enum PoolAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+  EMERGENCY
+}
+
+enum PoolAlertType {
+  LOW_LIQUIDITY
+  HIGH_UTILIZATION
+  EXPOSURE_LIMIT_REACHED
+  HEALTH_SCORE_DROP
+  REBALANCE_REQUIRED
+  LARGE_CLAIM
+}
+
+enum PolicyStatus {
+  ACTIVE
+  EXPIRED
   CANCELLED
-  DEAD_LETTER
+  CLAIMED
 }
 
-model BlockchainTransactionQueueItem {
-  id                 String                   @id @default(cuid())
-  idempotencyKey     String                   @unique @map("idempotency_key")
-  signerAddress      String                   @map("signer_address")
-  contractAddress    String                   @map("contract_address")
-  functionName       String                   @map("function_name")
-  payload            Json
-  metadata           Json?
-  priority           TransactionQueuePriority @default(NORMAL)
-  status             TransactionQueueStatus   @default(QUEUED)
-  nonce              BigInt?
-  feeBid             BigInt?                  @map("fee_bid")
-  maxFee             BigInt?                  @map("max_fee")
-  txHash             String?                  @map("tx_hash")
-  retryCount         Int                      @default(0) @map("retry_count")
-  maxRetries         Int                      @default(5) @map("max_retries")
-  nextAttemptAt      DateTime?                @map("next_attempt_at")
-  lastError          String?                  @map("last_error")
-  result             Json?
-  submittedAt        DateTime?                @map("submitted_at")
-  confirmedAt        DateTime?                @map("confirmed_at")
-  processingStartedAt DateTime?               @map("processing_started_at")
-  createdAt          DateTime                 @default(now()) @map("created_at")
-  updatedAt          DateTime                 @updatedAt @map("updated_at")
-
-  attempts           BlockchainTransactionAttempt[]
-
-  @@index([status, priority, createdAt])
-  @@index([signerAddress, status])
-  @@index([nextAttemptAt])
-  @@map("blockchain_tx_queue_items")
+enum ClaimStatus {
+  PENDING
+  REVIEWING
+  APPROVED
+  REJECTED
+  PAID
+  DISPUTED
 }
 
-model BlockchainTransactionAttempt {
-  id            String                 @id @default(cuid())
-  queueItemId   String                 @map("queue_item_id")
-  queueItem     BlockchainTransactionQueueItem @relation(fields: [queueItemId], references: [id], onDelete: Cascade)
-  attemptNumber Int                    @map("attempt_number")
-  nonce         BigInt?
-  feeBid        BigInt?                @map("fee_bid")
-  txHash        String?                @map("tx_hash")
-  status        TransactionQueueStatus
-  error         String?
-  rawResponse   Json?                  @map("raw_response")
-  createdAt     DateTime               @default(now()) @map("created_at")
-
-  @@index([queueItemId, attemptNumber])
-  @@index([txHash])
-  @@map("blockchain_tx_attempts")
+enum AssessmentStage {
+  INITIAL_REVIEW
+  DOCUMENT_VERIFICATION
+  RISK_ASSESSMENT
+  FINAL_APPROVAL
 }
 
-model BlockchainNonceState {
-  signerAddress String   @id @map("signer_address")
-  nextNonce     BigInt   @default(0) @map("next_nonce")
-  lastUsedNonce BigInt?  @map("last_used_nonce")
-  lastTxHash    String?  @map("last_tx_hash")
-  metadata      Json?
+enum AssessorRole {
+  JUNIOR_ASSESSOR
+  SENIOR_ASSESSOR
+  CLAIMS_MANAGER
+  DISPUTE_RESOLVER
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  ESCALATED
+}
+
+model InsurancePolicy {
+  id             String    @id @default(cuid())
+  userId         String    @map("user_id")
+  user           User      @relation(fields: [userId], references: [id])
+  poolId         String    @map("pool_id")
+  pool           InsurancePool @relation(fields: [poolId], references: [id])
+  riskType       RiskType  @map("risk_type")
+  premium        Decimal   @map("premium")
+  coverageAmount Decimal   @map("coverage_amount")
+  status         PolicyStatus @default(ACTIVE)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  claims         Claim[]
+
+  @@map("insurance_policies")
+}
+
+model InsurancePool {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?  @map("description")
+  capital       Decimal  @default(0)
+  lockedCapital Decimal  @default(0) @map("locked_capital")
+  totalPayouts  Decimal  @default(0) @map("total_payouts")
+  totalPremiums Decimal  @default(0) @map("total_premiums")
+  
+  // Risk management fields
+  maxExposureLimit    Decimal?  @map("max_exposure_limit")
+  currentExposure     Decimal   @default(0) @map("current_exposure")
+  riskLevel           PoolRiskLevel @default(LOW) @map("risk_level")
+  utilizationThreshold Decimal  @default(0.75) @map("utilization_threshold")
+  
+  // Health monitoring
+  healthScore         Int       @default(100) @map("health_score")
+  isActive            Boolean   @default(true) @map("is_active")
+  isRebalancing       Boolean   @default(false) @map("is_rebalancing")
+  lastRebalanceAt     DateTime? @map("last_rebalance_at")
+  lastHealthCheckAt   DateTime? @map("last_health_check_at")
+  
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  @@map("blockchain_nonce_states")
+  insurancePolicies    InsurancePolicy[]
+  reinsuranceContracts ReinsuranceContract[]
+  claims               Claim[]
+  poolAlerts           PoolAlert[]
+  rebalanceHistory     PoolRebalanceHistory[]
+
+  @@map("insurance_pools")
 }
 
-// Data Retention & Archival Models
-enum RetentionDataType {
-  TRADES
-  LOGS
-  SESSIONS
-  ANALYTICS
-  WEBHOOKS
-  AUDIT
+model Claim {
+  id           String      @id @default(cuid())
+  policyId     String      @map("policy_id")
+  policy       InsurancePolicy @relation(fields: [policyId], references: [id])
+  poolId       String?     @map("pool_id")
+  pool         InsurancePool? @relation(fields: [poolId], references: [id])
+  claimAmount  Decimal     @map("claim_amount")
+  status       ClaimStatus @default(PENDING)
+  payoutAmount Decimal?    @map("payout_amount")
+  
+  // Workflow fields
+  currentStage AssessmentStage? @map("current_stage")
+  isParametric Boolean     @default(false) @map("is_parametric")
+  parametricTriggerData Json? @map("parametric_trigger_data")
+  assessorId   String?     @map("assessor_id")
+  assessor     Assessor?   @relation(fields: [assessorId], references: [id])
+  
+  // Timestamps
+  submittedAt  DateTime    @default(now()) @map("submitted_at")
+  reviewedAt   DateTime?   @map("reviewed_at")
+  resolvedAt   DateTime?   @map("resolved_at")
+  paidAt       DateTime?   @map("paid_at")
+  
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  evidence     ClaimEvidence[]
+  assessments  ClaimAssessment[]
+  disputes     ClaimDispute[]
+
+  @@map("claims")
 }
 
-model DataRetentionRule {
-  id              String            @id @default(cuid())
-  name            String
-  dataType        RetentionDataType @map("data_type")
-  tenantId        String?           @map("tenant_id")
-  retentionDays   Int               @map("retention_days")
-  archiveEnabled  Boolean           @default(true) @map("archive_enabled")
-  archivePrefix   String?           @map("archive_prefix")
-  secureDelete    Boolean           @default(true) @map("secure_delete")
-  legalHoldEnabled Boolean          @default(true) @map("legal_hold_enabled")
-  isActive        Boolean           @default(true) @map("is_active")
-  metadata        Json?
-  lastRunAt       DateTime?         @map("last_run_at")
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
+model Assessor {
+  id              String       @id @default(cuid())
+  userId          String       @map("user_id")
+  role            AssessorRole
+  specialization  String?      @map("specialization")
+  isActive        Boolean      @default(true) @map("is_active")
+  workload        Int          @default(0)
+  maxConcurrentClaims Int      @default(10) @map("max_concurrent_claims")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
-  executions      RetentionExecution[]
-  legalHolds      LegalHold[]
+  // Relations
+  assignedClaims  Claim[]
+  assessments     ClaimAssessment[]
 
-  @@unique([tenantId, dataType])
-  @@index([dataType, isActive])
-  @@map("data_retention_rules")
+  @@map("assessors")
 }
 
-model LegalHold {
-  id          String            @id @default(cuid())
-  ruleId      String?           @map("rule_id")
-  rule        DataRetentionRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
-  dataType    RetentionDataType @map("data_type")
-  referenceId String            @map("reference_id")
+model ClaimEvidence {
+  id          String   @id @default(cuid())
+  claimId     String   @map("claim_id")
+  claim       Claim    @relation(fields: [claimId], references: [id])
+  ipfsHash    String   @map("ipfs_hash")
+  documentType String  @map("document_type")
+  description String?
+  uploadedBy  String   @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("claim_evidence")
+}
+
+model ClaimAssessment {
+  id              String           @id @default(cuid())
+  claimId         String           @map("claim_id")
+  claim           Claim            @relation(fields: [claimId], references: [id])
+  assessorId      String           @map("assessor_id")
+  assessor        Assessor         @relation(fields: [assessorId], references: [id])
+  stage           AssessmentStage
+  decision        ClaimStatus?
+  score           Int?             @map("assessment_score")
+  notes           String?
+  parametricScore Decimal?         @map("parametric_score")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("claim_assessments")
+}
+
+model ClaimDispute {
+  id          String        @id @default(cuid())
+  claimId     String        @map("claim_id")
+  claim       Claim         @relation(fields: [claimId], references: [id])
+  raisedBy    String        @map("raised_by")
   reason      String
-  heldBy      String?           @map("held_by")
-  expiresAt   DateTime?         @map("expires_at")
-  isActive    Boolean           @default(true) @map("is_active")
-  metadata    Json?
-  createdAt   DateTime          @default(now()) @map("created_at")
-  updatedAt   DateTime          @updatedAt @map("updated_at")
+  status      DisputeStatus @default(OPEN)
+  resolution  String?
+  resolvedBy  String?       @map("resolved_by")
+  resolvedAt  DateTime?     @map("resolved_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  @@index([dataType, referenceId, isActive])
-  @@index([expiresAt])
-  @@map("legal_holds")
+  @@map("claim_disputes")
 }
 
-model RetentionExecution {
-  id                 String            @id @default(cuid())
-  ruleId             String            @map("rule_id")
-  rule               DataRetentionRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  dataType           RetentionDataType @map("data_type")
-  status             String
-  archivedCount      Int               @default(0) @map("archived_count")
-  deletedCount       Int               @default(0) @map("deleted_count")
-  cryptoShreddedCount Int              @default(0) @map("crypto_shredded_count")
-  error              String?
-  report             Json?
-  startedAt          DateTime          @default(now()) @map("started_at")
-  finishedAt         DateTime?         @map("finished_at")
-  createdAt          DateTime          @default(now()) @map("created_at")
-
-  @@index([ruleId, createdAt])
-  @@index([dataType, createdAt])
-  @@map("retention_executions")
+// Reinsurance Enums
+enum ReinsuranceType {
+  QUOTA_SHARE
+  SURPLUS
+  EXCESS_OF_LOSS
+  STOP_LOSS
+  FACULTATIVE
+  TREATY
 }
 
-// Real-Time Analytics Rollups
-enum MetricRollupBucket {
-  M1
-  M5
-  M15
-  H1
-  D1
+enum ReinsuranceStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  SUSPENDED
 }
 
-model RealtimeMetricRollup {
+enum ReinsuranceClaimStatus {
+  PENDING
+  SUBMITTED_TO_REINSURER
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  SETTLED
+  DISPUTED
+}
+
+model ReinsuranceContract {
+  id             String           @id @default(cuid())
+  poolId         String           @map("pool_id")
+  pool           InsurancePool    @relation(fields: [poolId], references: [id])
+  
+  // Contract details
+  reinsurerName  String           @map("reinsurer_name")
+  reinsurerContact Json?          @map("reinsurer_contact")
+  type           ReinsuranceType  @default(QUOTA_SHARE)
+  coverageLimit  Decimal          @map("coverage_limit")
+  premiumRate    Decimal          @map("premium_rate")
+  deductible     Decimal          @default(0)
+  attachmentPoint Decimal?       @map("attachment_point")
+  exhaustionPoint Decimal?       @map("exhaustion_point")
+  
+  // Coverage terms
+  startDate      DateTime         @map("start_date")
+  endDate        DateTime         @map("end_date")
+  status         ReinsuranceStatus @default(ACTIVE)
+  
+  // Financial tracking
+  totalPremiumsPaid Decimal      @default(0) @map("total_premiums_paid")
+  totalClaimsReceived Decimal    @default(0) @map("total_claims_received")
+  totalClaimsPaid Decimal        @default(0) @map("total_claims_paid")
+  availableCoverage Decimal      @map("available_coverage")
+  
+  // Terms and conditions
+  terms          String?
+  notes          String?
+  metadata       Json?
+  
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  claims         ReinsuranceClaim[]
+
+  @@index([poolId, status])
+  @@index([startDate, endDate])
+  @@map("reinsurance_contracts")
+}
+
+model ReinsuranceClaim {
+  id              String                @id @default(cuid())
+  contractId      String                @map("contract_id")
+  contract        ReinsuranceContract   @relation(fields: [contractId], references: [id])
+  originalClaimId String?               @map("original_claim_id")
+  originalClaim   Claim?                @relation(fields: [originalClaimId], references: [id])
+  
+  // Claim details
+  claimAmount     Decimal               @map("claim_amount")
+  requestedAmount Decimal               @map("requested_amount")
+  approvedAmount  Decimal?              @map("approved_amount")
+  paidAmount      Decimal?              @map("paid_amount")
+  
+  // Status tracking
+  status          ReinsuranceClaimStatus @default(PENDING)
+  rejectionReason String?               @map("rejection_reason")
+  
+  // Workflow tracking
+  submittedToReinsurerAt DateTime?      @map("submitted_to_reinsurer_at")
+  reinsurerResponseAt  DateTime?        @map("reinsurer_response_at")
+  settledAt           DateTime?         @map("settled_at")
+  
+  // Documentation
+  supportingDocuments Json?             @map("supporting_documents")
+  reinsurerNotes      String?           @map("reinsurer_notes")
+  
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  @@index([contractId, status])
+  @@index([originalClaimId])
+  @@map("reinsurance_claims")
+model ReputationTip {
+  id          String   @id @default(cuid())
+  category    String   // e.g., "transactions", "community", "projects"
+  title       String
+  description String
+  impact      String   // "HIGH", "MEDIUM", "LOW"
+  difficulty  String   // "EASY", "MEDIUM", "HARD"
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("reputation_tips")
+}
+
+model WeeklyReputationSummary {
+  id                    String   @id @default(cuid())
+  userId                String   @map("user_id")
+  user                  User     @relation(fields: [userId], references: [id])
+  weekStartDate         DateTime @map("week_start_date")
+  previousScore         Int      @map("previous_score")
+  currentScore          Int      @map("current_score")
+  scoreChange           Int      @map("score_change")
+  level                 String
+  activitiesCount       Int      @map("activities_count")
+  topActivityType       String?  @map("top_activity_type")
+  improvementTips       Json?    @map("improvement_tips")
+  emailSent             Boolean  @default(false) @map("email_sent")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, weekStartDate])
+  @@map("weekly_reputation_summaries")
+}
+
+model PoolAlert {
   id          String           @id @default(cuid())
-  bucket      MetricRollupBucket
-  metricName  String           @map("metric_name")
-  metricValue Decimal          @db.Decimal(28, 8) @map("metric_value")
-  dimensions  Json?
-  bucketStart DateTime         @map("bucket_start")
-  bucketEnd   DateTime         @map("bucket_end")
+  poolId      String           @map("pool_id")
+  pool        InsurancePool    @relation(fields: [poolId], references: [id])
+  alertType   PoolAlertType    @map("alert_type")
+  severity    PoolAlertSeverity
+  message     String
+  metadata    Json?
+  isResolved  Boolean          @default(false) @map("is_resolved")
+  resolvedAt  DateTime?        @map("resolved_at")
   createdAt   DateTime         @default(now()) @map("created_at")
 
-  @@unique([bucket, metricName, bucketStart])
-  @@index([metricName, bucketStart])
-  @@index([bucket, bucketStart])
-  @@map("realtime_metric_rollups")
+  @@index([poolId, isResolved])
+  @@index([severity, createdAt])
+  @@map("pool_alerts")
 }
 
-model RealtimeMetricSnapshot {
-  id          String   @id @default(cuid())
-  metricName  String   @map("metric_name")
-  metricValue Decimal  @db.Decimal(28, 8) @map("metric_value")
-  dimensions  Json?
-  capturedAt  DateTime @default(now()) @map("captured_at")
-
-  @@index([metricName, capturedAt])
-  @@map("realtime_metric_snapshots")
-}
-
-// ─── Compliance Engine Models ────────────────────────────────────────────────
-
-model SanctionsList {
+model PoolRebalanceHistory {
   id              String   @id @default(cuid())
-  name            String
-  type            String   // INDIVIDUAL, ENTITY, VESSEL, AIRCRAFT
-  listType        String   // OFAC, UN, EU, etc.
-  programs        String[]
-  aliases         String[]
-  dateOfBirth     DateTime? @map("date_of_birth")
-  placeOfBirth    String?  @map("place_of_birth")
-  nationality     String?
-  passportNumber  String?  @map("passport_number")
-  nationalIdNumber String? @map("national_id_number")
-  addresses       String[]
-  walletAddresses String[] @map("wallet_addresses")
-  remarks         String?
-  sourceListUrl   String?  @map("source_list_url")
-  isActive        Boolean  @default(true) @map("is_active")
-  lastUpdated     DateTime @default(now()) @map("last_updated")
-  createdAt       DateTime @default(now()) @map("created_at")
+  poolId          String   @map("pool_id")
+  pool            InsurancePool @relation(fields: [poolId], references: [id])
+  reason          String
+  actionsTaken    Json     @map("actions_taken")
+  previousState   Json     @map("previous_state")
+  newState        Json     @map("new_state")
+  executedBy      String?  @map("executed_by")
+  executedAt      DateTime @default(now()) @map("executed_at")
 
-  @@index([listType, isActive])
-  @@index([name])
-  @@index([walletAddresses])
-  @@map("sanctions_list")
+  @@index([poolId, executedAt])
+  @@map("pool_rebalance_history")
+enum AccountingProvider {
+  QUICKBOOKS
+  XERO
+  FRESHBOOKS
+  WAVE
 }
 
-model TravelRuleRecord {
-  id                     String   @id @default(cuid())
-  transactionHash        String   @unique @map("transaction_hash")
-  originatorName         String   @map("originator_name")
-  originatorAddress      String   @map("originator_address")
-  originatorAccountNumber String? @map("originator_account_number")
-  beneficiaryName        String   @map("beneficiary_name")
-  beneficiaryAddress     String   @map("beneficiary_address")
-  beneficiaryAccountNumber String? @map("beneficiary_account_number")
-  amountUsdCents         Int      @map("amount_usd_cents")
-  timestamp              DateTime @default(now())
-  status                 String   // PENDING, COMPLIANT, NON_COMPLIANT, EXEMPTED
-  exemptionReason        String?  @map("exemption_reason")
-  dataCollected          Boolean  @default(false) @map("data_collected")
-  verificationStatus     String   @default("UNVERIFIED") @map("verification_status")
-  createdAt              DateTime @default(now()) @map("created_at")
+// Regenerative Finance Models
 
-  @@index([status, timestamp])
-  @@index([transactionHash])
-  @@map("travel_rule_records")
+model FundingRound {
+  id                String            @id @default(cuid())
+  title             String
+  description       String?
+  type              FundingRoundType  @default(QUADRATIC)
+  status            FundingRoundStatus @default(UPCOMING)
+  startTime         DateTime          @map("start_time")
+  endTime           DateTime          @map("end_time")
+  matchingPool      BigInt            @default(0) @map("matching_pool")
+  totalContributions BigInt           @default(0) @map("total_contributions")
+  totalMatched      BigInt            @default(0) @map("total_matched")
+  metadata          Json?             @map("metadata")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  projects          FundingRoundProject[]
+  contributions      QuadraticContribution[]
+  impactCertificates ImpactCertificate[]
+  poolAllocations   PoolAllocation[]
+
+  @@map("funding_rounds")
 }
 
-model ComplianceAuditTrail {
-  id                      String   @id @default(cuid())
-  transactionId           String   @unique @map("transaction_id")
-  complianceScore         Int      @map("compliance_score")
-  riskLevel               String   @map("risk_level")
-  sanctionsOriginator     Json?    @map("sanctions_originator")
-  sanctionsBeneficiary    Json?    @map("sanctions_beneficiary")
-  travelRuleRequired      Boolean  @default(false) @map("travel_rule_required")
-  travelRuleCompliant     Boolean? @map("travel_rule_compliant")
-  travelRuleRecordId      String?  @map("travel_rule_record_id")
-  currencyControlPermitted Boolean? @map("currency_control_permitted")
-  ctrRequired             Boolean  @default(false) @map("ctr_required")
-  sarRecommended          Boolean  @default(false) @map("sar_recommended")
-  flags                   String[]
-  recommendedAction       String   @map("recommended_action")
-  auditDate               DateTime @default(now()) @map("audit_date")
-  retentionUntil          DateTime @map("retention_until")
-  createdAt               DateTime @default(now()) @map("created_at")
+model PublicGoodsProject {
+  id                String            @id @id @default(cuid())
+  projectId         String?           @unique @map("project_id")
+  project           Project?          @relation(fields: [projectId], references: [id])
+  title             String
+  description       String
+  category          String
+  walletAddress     String            @map("wallet_address")
+  impactMetrics     Json?             @map("impact_metrics")
+  verificationData  Json?             @map("verification_data")
+  status            ProjectStatus      @default(ACTIVE)
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  @@index([transactionId])
-  @@index([riskLevel, auditDate])
-  @@index([auditDate])
-  @@map("compliance_audit_trail")
+  // Relations
+  roundProjects     FundingRoundProject[]
+  contributions     QuadraticContribution[]
+  impactCertificates ImpactCertificate[]
+  retroactiveFunding RetroactiveFunding[]
+
+  @@map("public_goods_projects")
 }
 
-model SarReport {
-  id                String   @id @default(cuid())
-  transactionId     String   @unique @map("transaction_id")
-  filingDate        DateTime @default(now()) @map("filing_date")
-  status            String   // PENDING_FILING, FILED, ACCEPTED
-  narrative         String
-  suspiciousIndicators String[] @map("suspicious_indicators")
-  riskLevel         String   @map("risk_level")
-  amountInvolved    Decimal  @db.Decimal(18, 4) @map("amount_involved")
-  filedBy           String   @map("filed_by")
-  regulatoryBody    String   @default("FinCEN") @map("regulatory_body")
-  metadata          Json?
-  createdAt         DateTime @default(now()) @map("created_at")
+model FundingRoundProject {
+  id                   String     @id @default(cuid())
+  fundingRoundId       String     @map("funding_round_id")
+  fundingRound         FundingRound @relation(fields: [fundingRoundId], references: [id])
+  publicGoodsProjectId String     @map("public_goods_project_id")
+  publicGoodsProject   PublicGoodsProject @relation(fields: [publicGoodsProjectId], references: [id])
+  uniqueContributors   Int        @default(0) @map("unique_contributors")
+  totalContributions   BigInt     @default(0) @map("total_contributions")
+  matchedAmount        BigInt     @default(0) @map("matched_amount")
+  status               ProjectParticipationStatus @default(APPROVED)
+  createdAt            DateTime   @default(now()) @map("created_at")
+  updatedAt            DateTime   @updatedAt @map("updated_at")
 
-  @@index([status, filingDate])
-  @@map("sar_reports")
+  // Relations
+  contributions QuadraticContribution[]
+
+  @@unique([fundingRoundId, publicGoodsProjectId])
+  @@map("funding_round_projects")
 }
 
-model CtrReport {
-  id                String   @id @default(cuid())
-  transactionId     String   @unique @map("transaction_id")
-  filingDate        DateTime @default(now()) @map("filing_date")
-  status            String   // PENDING_FILING, FILED, ACCEPTED
-  amount            Decimal  @db.Decimal(18, 4)
-  originatorInfo    Json?    @map("originator_info")
-  beneficiaryInfo   Json?    @map("beneficiary_info")
-  filedBy           String   @map("filed_by")
-  regulatoryBody    String   @default("FinCEN") @map("regulatory_body")
-  createdAt         DateTime @default(now()) @map("created_at")
+model QuadraticContribution {
+  id                   String   @id @default(cuid())
+  fundingRoundId       String   @map("funding_round_id")
+  fundingRound         FundingRound @relation(fields: [fundingRoundId], references: [id])
+  publicGoodsProjectId String   @map("public_goods_project_id")
+  publicGoodsProject   PublicGoodsProject @relation(fields: [publicGoodsProjectId], references: [id])
+  fundingRoundProjectId String? @map("funding_round_project_id")
+  fundingRoundProject FundingRoundProject? @relation(fields: [fundingRoundProjectId], references: [id])
+  contributorAddress   String   @map("contributor_address")
+  amount               BigInt
+  voiceCredits         BigInt   @default(0) @map("voice_credits")
+  transactionHash      String   @unique @map("transaction_hash")
+  timestamp            DateTime @default(now())
+  createdAt            DateTime @default(now()) @map("created_at")
 
-  @@index([status, filingDate])
-  @@map("ctr_reports")
+  @@index([fundingRoundId, contributorAddress])
+  @@index([publicGoodsProjectId])
+  @@map("quadratic_contributions")
 }
 
-// ─── MEV Protection Models ───────────────────────────────────────────────────
+model ImpactCertificate {
+  id                   String              @id @default(cuid())
+  tokenId              String              @unique @map("token_id")
+  fundingRoundId       String              @map("funding_round_id")
+  fundingRound         FundingRound        @relation(fields: [fundingRoundId], references: [id])
+  publicGoodsProjectId String              @map("public_goods_project_id")
+  publicGoodsProject   PublicGoodsProject  @relation(fields: [publicGoodsProjectId], references: [id])
+  issuerAddress        String              @map("issuer_address")
+  holderAddress        String              @map("holder_address")
+  impactMetrics        Json                @map("impact_metrics")
+  verificationData     Json?               @map("verification_data")
+  status               CertificateStatus   @default(ACTIVE)
+  issuedAt             DateTime            @default(now()) @map("issued_at")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
 
-model OrderCommitment {
-  id                    String   @id @default(cuid())
-  orderHash             String   @unique @map("order_hash")
-  userAddress           String   @map("user_address")
-  side                  String
-  pair                  String
-  amount                Decimal  @db.Decimal(18, 4)
-  price                 Decimal? @db.Decimal(18, 4)
-  orderType             String   @map("order_type")
-  maxSlippageBps        Int      @map("max_slippage_bps")
-  commitmentHash        String   @unique @map("commitment_hash")
-  nonce                 String
-  status                String   // COMMITTED, REVEALED, EXECUTED, CANCELLED, EXPIRED
-  committedAt           DateTime @default(now()) @map("committed_at")
-  revealedAt            DateTime? @map("revealed_at")
-  executedAt            DateTime? @map("executed_at")
-  expiresAt             DateTime? @map("expires_at")
-  blockNumber           BigInt?  @map("block_number")
-  fairOrderingSequence  BigInt   @map("fair_ordering_sequence")
-  createdAt             DateTime @default(now()) @map("created_at")
-
-  @@index([status, committedAt])
-  @@index([commitmentHash])
-  @@index([fairOrderingSequence])
-  @@map("order_commitments")
+  @@map("impact_certificates")
 }
 
-model EncryptedOrder {
-  id                String   @id @default(cuid())
-  ciphertext        String
-  shares            Json
-  threshold         Int
-  totalShares       Int      @map("total_shares")
-  createdAt         DateTime @default(now()) @map("created_at")
-  decryptedAt       DateTime? @map("decrypted_at")
+model RetroactiveFunding {
+  id                   String              @id @default(cuid())
+  publicGoodsProjectId String              @map("public_goods_project_id")
+  publicGoodsProject   PublicGoodsProject  @relation(fields: [publicGoodsProjectId], references: [id])
+  evaluatorAddress     String              @map("evaluator_address")
+  impactScore          Decimal             @map("impact_score")
+  fundingAmount        BigInt              @map("funding_amount")
+  evaluationCriteria   Json                @map("evaluation_criteria")
+  supportingEvidence   Json?               @map("supporting_evidence")
+  status               FundingStatus       @default(PENDING)
+  evaluatedAt          DateTime            @default(now()) @map("evaluated_at")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
 
-  @@index([createdAt])
-  @@map("encrypted_orders")
+  @@map("retroactive_funding")
 }
 
-// ─── MPC Key Management Models ───────────────────────────────────────────────
+model MatchingPool {
+  id                   String            @id @default(cuid())
+  name                 String
+  description          String?
+  totalAmount          BigInt            @map("total_amount")
+  allocatedAmount      BigInt            @default(0) @map("allocated_amount")
+  source               MatchingPoolSource @default(PROTOCOL_FEES)
+  percentageFee        Decimal           @default(0.01) @map("percentage_fee")
+  isActive             Boolean           @default(true) @map("is_active")
+  metadata             Json?             @map("metadata")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
 
-model MpcDistributedKey {
-  id                    String   @id @default(cuid())
-  purpose               String
-  thresholdScheme       String   @map("threshold_scheme") // 2-of-3, 3-of-5
-  requiredShares        Int      @map("required_shares")
-  totalShares           Int      @map("total_shares")
-  publicKey             String   @unique @map("public_key")
-  status                String   // ACTIVE, ROTATING, COMPROMISED, REVOKED
-  createdAt             DateTime @default(now()) @map("created_at")
-  lastRotatedAt         DateTime? @map("last_rotated_at")
-  nextRotationAt        DateTime? @map("next_rotation_at")
-  rotationPeriodDays    Int      @default(90) @map("rotation_period_days")
-  compromiseDetectedAt  DateTime? @map("compromise_detected_at")
-  revokedAt             DateTime? @map("revoked_at")
+  // Relations
+  allocations          PoolAllocation[]
 
-  @@index([status])
-  @@index([nextRotationAt])
-  @@map("mpc_distributed_keys")
+  @@map("matching_pools")
 }
 
-model MpcKeyShare {
-  id                  String   @id @default(cuid())
-  keyId               String   @map("key_id")
-  shareIndex          Int      @map("share_index")
-  shareData           String   @map("share_data") // Encrypted
-  location            String   // AWS_HSM, GCP_HSM, ON_PREM_HSM, AZURE_KEY_VAULT
-  hsmKeyId            String   @map("hsm_key_id")
-  publicKeyCommitment String   @map("public_key_commitment")
-  createdAt           DateTime @default(now()) @map("created_at")
-  lastUsedAt          DateTime? @map("last_used_at")
-  isActive            Boolean  @default(true) @map("is_active")
+model PoolAllocation {
+  id                   String       @id @default(cuid())
+  matchingPoolId       String       @map("matching_pool_id")
+  matchingPool         MatchingPool @relation(fields: [matchingPoolId], references: [id])
+  fundingRoundId       String?      @map("funding_round_id")
+  fundingRound         FundingRound? @relation(fields: [fundingRoundId], references: [id])
+  amount               BigInt
+  allocatedAt          DateTime     @default(now()) @map("allocated_at")
+  createdAt            DateTime     @default(now()) @map("created_at")
 
-  @@index([keyId, shareIndex])
-  @@index([location, isActive])
-  @@map("mpc_key_shares")
+  @@map("pool_allocations")
 }
 
-// ─── Strategy Marketplace Models ─────────────────────────────────────────────
+model ImpactMetric {
+  id                   String   @id @default(cuid())
+  publicGoodsProjectId String   @map("public_goods_project_id")
+  metricName           String   @map("metric_name")
+  metricValue          String   @map("metric_value")
+  unit                 String?
+  timestamp            DateTime @default(now())
+  verified             Boolean  @default(false)
+  verificationSource   String?  @map("verification_source")
+  createdAt            DateTime @default(now()) @map("created_at")
 
-model TradingStrategy {
-  id                  String   @id @default(cuid())
-  name                String
+  @@index([publicGoodsProjectId])
+  @@index([metricName])
+  @@map("impact_metrics")
+}
+
+model IntegrationConfig {
+  id                   String               @id @default(cuid())
+  platform             IntegrationPlatform
+  config               Json
+  isActive             Boolean              @default(true) @map("is_active")
+  lastSyncAt           DateTime?            @map("last_sync_at")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  @@unique([platform])
+  @@map("integration_configs")
+}
+
+enum FundingRoundType {
+  QUADRATIC
+  RETROACTIVE
+  IMPACT_MARKET
+}
+
+enum FundingRoundStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum ProjectParticipationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum CertificateStatus {
+  ACTIVE
+  BURNED
+  TRANSFERRED
+  EXPIRED
+}
+
+enum FundingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum MatchingPoolSource {
+  PROTOCOL_FEES
+  DIRECT_DEPOSIT
+  TREASURY
+  EXTERNAL_GRANT
+}
+
+enum IntegrationPlatform {
+  GITCOIN
+  CLR_FUND
+  GITHUB
+  DISCORD
+}
+
+// Trading Competition Models
+
+model TradingCompetition {
+  id                  String               @id @default(cuid())
+  title               String
   description         String?
-  developerAddress    String   @map("developer_address")
-  strategyType        String   @map("strategy_type")
-  executionModule     String   @map("execution_module") // Docker/WASM
-  riskLevel           String   @map("risk_level")
-  pricingModel        String   @map("pricing_model")
-  priceUsdCents       Int?     @map("price_usd_cents")
-  profitSharePercent  Decimal? @db.Decimal(5, 2) @map("profit_share_percent")
-  maxPositionSize     Decimal? @db.Decimal(18, 4) @map("max_position_size")
-  stopLossPercent     Decimal? @db.Decimal(5, 2) @map("stop_loss_percent")
-  supportedPairs      String[] @map("supported_pairs")
-  totalReturn         Decimal? @db.Decimal(18, 4) @map("total_return")
-  sharpeRatio         Decimal? @db.Decimal(5, 2) @map("sharpe_ratio")
-  maxDrawdown         Decimal? @db.Decimal(5, 4) @map("max_drawdown")
-  winRate             Decimal? @db.Decimal(5, 4) @map("win_rate")
-  totalTrades         Int?     @map("total_trades")
-  subscriberCount     Int      @default(0) @map("subscriber_count")
-  totalAUM            Decimal? @db.Decimal(18, 4) @map("total_aum")
-  isActive            Boolean  @default(true) @map("is_active")
+  type                CompetitionType
+  durationType        DurationType
+  startTime           DateTime             @map("start_time")
+  endTime             DateTime             @map("end_time")
+  status              CompetitionStatus    @default(UPCOMING)
+  prizePool           Decimal              @default(0) @map("prize_pool")
+  maxParticipants     Int?                 @map("max_participants")
+  minDeposit          Decimal              @default(0) @map("min_deposit")
+  requiredKycTier     Int                  @default(0) @map("required_kyc_tier")
+  entryFee            Decimal              @default(0) @map("entry_fee")
+  prizeDistribution   Json                 @map("prize_distribution")
+  rules               Json?
+  createdBy           String               @map("created_by")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  // Relations
+  participants        CompetitionParticipant[]
+  leaderboard         CompetitionLeaderboard[]
+  trades              CompetitionTrade[]
+  achievements         CompetitionAchievement[]
+  antiCheatFlags      AntiCheatFlag[]
+  prizeDistributions  PrizeDistribution[]
+
+  @@map("trading_competitions")
+}
+
+model CompetitionParticipant {
+  id             String     @id @default(cuid())
+  competitionId  String     @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String     @map("user_id")
+  user           User       @relation(fields: [userId], references: [id])
+  status         ParticipantStatus @default(REGISTERED)
+  joinedAt       DateTime   @default(now()) @map("joined_at")
+  initialBalance Decimal    @default(0) @map("initial_balance")
+  finalBalance   Decimal?   @map("final_balance")
+  totalVolume    Decimal    @default(0) @map("total_volume")
+  totalReturn    Decimal    @default(0) @map("total_return")
+  sharpeRatio    Decimal?   @map("sharpe_ratio")
+  maxDrawdown    Decimal    @default(0) @map("max_drawdown")
+  winRate        Decimal    @default(0) @map("win_rate")
+  rank           Int?
+  prizeAmount    Decimal?   @map("prize_amount")
+  disqualified   Boolean    @default(false) @map("disqualified")
+  disqualificationReason String? @map("disqualification_reason")
+  
+  // Relations
+  trades         CompetitionTrade[]
+  
+  @@unique([competitionId, userId])
+  @@map("competition_participants")
+}
+
+model CompetitionTrade {
+  id              String     @id @default(cuid())
+  competitionId   String     @map("competition_id")
+  competition     TradingCompetition @relation(fields: [competitionId], references: [id])
+  participantId   String     @map("participant_id")
+  participant     CompetitionParticipant @relation(fields: [participantId], references: [id])
+  userId          String     @map("user_id")
+  asset           String
+  side            TradeSide
+  quantity        Decimal
+  price           Decimal
+  totalValue      Decimal    @map("total_value")
+  fee             Decimal    @default(0)
+  timestamp       DateTime   @default(now())
+  transactionHash String?    @map("transaction_hash")
+  profitLoss      Decimal?   @map("profit_loss")
+  
+  @@index([competitionId, userId])
+  @@index([participantId])
+  @@index([timestamp])
+  @@map("competition_trades")
+}
+
+model CompetitionLeaderboard {
+  id             String     @id @default(cuid())
+  competitionId  String     @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String     @map("user_id")
+  user           User       @relation(fields: [userId], references: [id])
+  rank           Int
+  score          Decimal
+  totalReturn    Decimal    @map("total_return")
+  totalVolume    Decimal    @map("total_volume")
+  sharpeRatio    Decimal?   @map("sharpe_ratio")
+  maxDrawdown    Decimal    @map("max_drawdown")
+  winRate        Decimal    @default(0) @map("win_rate")
+  lastUpdated    DateTime   @default(now()) @map("last_updated")
+  
+  @@unique([competitionId, userId])
+  @@index([competitionId, rank])
+  @@map("competition_leaderboard")
+}
+
+model CompetitionAchievement {
+  id            String           @id @default(cuid())
+  competitionId String           @map("competition_id")
+  competition   TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId        String           @map("user_id")
+  user          User             @relation(fields: [userId], references: [id])
+  type          AchievementType
+  title         String
+  description   String
+  icon          String?
+  earnedAt      DateTime         @default(now()) @map("earned_at")
+  shared        Boolean          @default(false)
+  shareUrl      String?          @map("share_url")
+  
+  @@map("competition_achievements")
+}
+
+model AntiCheatFlag {
+  id             String         @id @default(cuid())
+  competitionId  String         @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String         @map("user_id")
+  user           User           @relation(fields: [userId], references: [id])
+  type           FlagType
+  severity       FlagSeverity
+  description    String
+  evidence       Json?
+  status         FlagStatus     @default(PENDING)
+  reviewedBy     String?        @map("reviewed_by")
+  reviewedAt     DateTime?      @map("reviewed_at")
+  action         String?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  
+  @@index([competitionId, userId])
+  @@index([status])
+  @@map("anti_cheat_flags")
+}
+
+model PrizeDistribution {
+  id             String     @id @default(cuid())
+  competitionId  String     @map("competition_id")
+  competition    TradingCompetition @relation(fields: [competitionId], references: [id])
+  userId         String     @map("user_id")
+  user           User       @relation(fields: [userId], references: [id])
+  rank           Int
+  prizeAmount    Decimal    @map("prize_amount")
+  currency       String     @default("USD")
+  status         PrizeStatus @default(PENDING)
+  transactionHash String?   @map("transaction_hash")
+  distributedAt  DateTime?  @map("distributed_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  
+  @@index([competitionId, userId])
+  @@index([status])
+  @@map("prize_distributions")
+}
+
+enum CompetitionType {
+  HIGHEST_RETURN
+  MOST_VOLUME
+  BEST_SHARPE
+  HIGHEST_WINS
+  LOWEST_DRAWDOWN
+}
+
+enum DurationType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum CompetitionStatus {
+  UPCOMING
+  ACTIVE
+  FINISHED
+  CANCELLED
+  SUSPENDED
+}
+
+enum ParticipantStatus {
+  REGISTERED
+  ACTIVE
+  FINISHED
+  DISQUALIFIED
+  WITHDRAWN
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum AchievementType {
+  FIRST_PLACE
+  TOP_THREE
+  TOP_TEN
+  HIGHEST_RETURN
+  MOST_VOLUME
+  BEST_RISK_ADJUSTED
+  WIN_STREAK
+  CONSISTENT_PERFORMANCE
+}
+
+enum FlagType {
+  WASH_TRADING
+  SELF_DEALING
+  MANIPULATION
+  BOTS
+  MULTIPLE_ACCOUNTS
+  UNUSUAL_PATTERN
+}
+
+enum FlagSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FlagStatus {
+  PENDING
+  REVIEWING
+  CONFIRMED
+  DISMISSED
+  ACTION_TAKEN
+}
+
+enum PrizeStatus {
+  PENDING
+  APPROVED
+  PAID
+  FAILED
+  CANCELLED
+}
+
+// Reputation Snapshot Models
+
+model ReputationSnapshot {
+  id                  String   @id @default(cuid())
+  period              SnapshotPeriod @map("period")
+  periodStart         DateTime @map("period_start")
+  periodEnd           DateTime @map("period_end")
+  totalUsers          Int      @map("total_users")
+  activeUsers         Int      @map("active_users")
+  averageScore        Float    @map("average_score")
+  medianScore         Float    @map("median_score")
+  highestScore        Int      @map("highest_score")
+  lowestScore         Int      @map("lowest_score")
+  scoreDistribution   Json     @map("score_distribution") // Distribution by score ranges
+  levelDistribution   Json     @map("level_distribution") // Distribution by reputation levels
+  totalActivities     Int      @map("total_activities")
+  newUsers            Int      @map("new_users")
+  decayedUsers        Int      @map("decayed_users")
+  decayedAmount       Float    @map("decayed_amount")
+  metadata            Json?    @map("metadata")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Relations
+  userSnapshots        ReputationUserSnapshot[]
+  comparisonsAsFirst   SnapshotComparison[] @relation("ComparisonSnapshot1")
+  comparisonsAsSecond  SnapshotComparison[] @relation("ComparisonSnapshot2")
+
+  @@unique([period, periodStart])
+  @@index([period])
+  @@index([periodStart])
+  @@map("reputation_snapshots")
+}
+
+model ReputationUserSnapshot {
+  id                  String   @id @default(cuid())
+  snapshotId          String   @map("snapshot_id")
+  snapshot            ReputationSnapshot @relation(fields: [snapshotId], references: [id])
+  userId              String   @map("user_id")
+  user                User     @relation(fields: [userId], references: [id])
+  reputationScore     Int      @map("reputation_score")
+  trustScore          Int      @map("trust_score")
+  reputationLevel     String   @map("reputation_level")
+  activityCount       Int      @map("activity_count")
+  successRate         Float    @map("success_rate")
+  reliabilityScore    Float    @map("reliability_score")
+  communityScore      Float    @map("community_score")
+  expertiseScore      Float    @map("expertise_score")
+  contributionSize    Float    @map("contribution_size")
+  peerRatingScore     Float    @map("peer_rating_score")
+  communityFeedbackScore Float @map("community_feedback_score")
+  compositeScore      Float    @map("composite_score")
+  rank                Int?     @map("rank") // Global ranking at snapshot time
+  percentile          Float?   @map("percentile") // Percentile at snapshot time
+  changeFromPrevious  Json?    @map("change_from_previous") // Changes from previous snapshot
+  metadata            Json?    @map("metadata")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([snapshotId, userId])
+  @@index([snapshotId])
+  @@index([userId])
+  @@index([reputationScore])
+  @@map("reputation_user_snapshots")
+}
+
+model ReputationTrend {
+  id                  String   @id @default(cuid())
+  userId              String   @map("user_id")
+  user                User     @relation(fields: [userId], references: [id])
+  trendType           TrendType @map("trend_type")
+  period              TrendPeriod @map("period")
+  startDate           DateTime @map("start_date")
+  endDate             DateTime @map("end_date")
+  startScore          Int      @map("start_score")
+  endScore            Int      @map("end_score")
+  scoreChange         Int      @map("score_change")
+  percentChange       Float    @map("percent_change")
+  averageDailyChange  Float    @map("average_daily_change")
+  volatility          Float    @map("volatility") // Standard deviation of daily changes
+  trendDirection      TrendDirection @map("trend_direction")
+  momentum            Float    @map("momentum") // Rate of change acceleration
+  predictionScore     Int?     @map("prediction_score") // Predicted score for next period
+  confidence          Float    @map("confidence") // Confidence in prediction (0-1)
+  factors             Json?    @map("factors") // Contributing factors to trend
+  metadata            Json?    @map("metadata")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  @@index([strategyType, isActive])
-  @@index([riskLevel, isActive])
-  @@index([sharpeRatio])
-  @@index([developerAddress])
-  @@map("trading_strategies")
+  @@unique([userId, trendType, period, startDate])
+  @@index([userId, trendType])
+  @@index([period])
+  @@index([trendDirection])
+  @@map("reputation_trends")
 }
 
-model CopyTradeSubscription {
-  id                String   @id @default(cuid())
-  strategyId        String   @map("strategy_id")
-  userAddress       String   @map("user_address")
-  allocationAmount  Decimal  @db.Decimal(18, 4) @map("allocation_amount")
-  maxAllocation     Decimal? @db.Decimal(18, 4) @map("max_allocation")
-  stopLossOverride  Decimal? @db.Decimal(5, 2) @map("stop_loss_override")
-  status            String   @default("ACTIVE")
-  subscribedAt      DateTime @default(now()) @map("subscribed_at")
-  lastSyncAt        DateTime @default(now()) @map("last_sync_at")
-  totalProfit       Decimal? @db.Decimal(18, 4) @map("total_profit")
-  totalFeesPaid     Decimal? @db.Decimal(18, 4) @map("total_fees_paid")
-  createdAt         DateTime @default(now()) @map("created_at")
-
-  @@index([strategyId, status])
-  @@index([userAddress])
-  @@map("copy_trade_subscriptions")
-}
-
-model StrategyBacktestResult {
+model SnapshotComparison {
   id                  String   @id @default(cuid())
-  strategyId          String   @map("strategy_id")
-  startDate           DateTime @map("start_date")
-  endDate             DateTime @map("end_date")
-  initialCapital      Decimal  @db.Decimal(18, 4) @map("initial_capital")
-  finalCapital        Decimal  @db.Decimal(18, 4) @map("final_capital")
-  totalReturn         Decimal  @db.Decimal(18, 4) @map("total_return")
-  annualizedReturn    Decimal  @db.Decimal(18, 4) @map("annualized_return")
-  sharpeRatio         Decimal  @db.Decimal(5, 2) @map("sharpe_ratio")
-  sortinoRatio        Decimal  @db.Decimal(5, 2) @map("sortino_ratio")
-  maxDrawdown         Decimal  @db.Decimal(5, 4) @map("max_drawdown")
-  winRate             Decimal  @db.Decimal(5, 4) @map("win_rate")
-  totalTrades         Int      @map("total_trades")
-  equityCurve         Json?    @map("equity_curve")
-  monthlyReturns      Json?    @map("monthly_returns")
+  snapshotId1         String   @map("snapshot_id_1")
+  snapshot1           ReputationSnapshot @relation("ComparisonSnapshot1", fields: [snapshotId1], references: [id])
+  snapshotId2         String   @map("snapshot_id_2")
+  snapshot2           ReputationSnapshot @relation("ComparisonSnapshot2", fields: [snapshotId2], references: [id])
+  comparisonType      ComparisonType @map("comparison_type")
+  metrics             Json     @map("metrics") // Detailed comparison metrics
+  insights            Json?    @map("insights") // AI-generated insights
+  significantChanges  Json     @map("significant_changes") // Notable changes
+  recommendations     Json?    @map("recommendations") // Actionable recommendations
+  similarityScore     Float    @map("similarity_score") // Overall similarity (0-1)
   createdAt           DateTime @default(now()) @map("created_at")
 
-  @@index([strategyId, startDate, endDate])
-  @@map("strategy_backtest_results")
+  @@unique([snapshotId1, snapshotId2, comparisonType])
+  @@index([snapshotId1])
+  @@index([snapshotId2])
+  @@map("snapshot_comparisons")
+}
+
+enum SnapshotPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum TrendType {
+  SCORE_TREND
+  ACTIVITY_TREND
+  RANK_TREND
+  LEVEL_TREND
+  DECAY_TREND
+  GROWTH_TREND
+}
+
+enum TrendPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum TrendDirection {
+  STRONGLY_DECLINING
+  DECLINING
+  STABLE
+  INCREASING
+  STRONGLY_INCREASING
+}
+
+enum ComparisonType {
+  PERIOD_OVER_PERIOD
+  YEAR_OVER_YEAR
+  MONTH_OVER_MONTH
+  WEEK_OVER_WEEK
+  CUSTOM
+// Reputation Dispute Models
+
+model ReputationDispute {
+  id                String               @id @default(cuid())
+  userId            String               @map("user_id")
+  user              User                 @relation(fields: [userId], references: [id])
+  disputedActivityId String?             @map("disputed_activity_id")
+  disputedActivity  ReputationActivity?  @relation(fields: [disputedActivityId], references: [id])
+  disputeType       DisputeType          @map("dispute_type")
+  reason            String
+  description       String
+  evidence          Json?                @map("evidence")
+  previousScore     Int                  @map("previous_score")
+  requestedScore    Int?                 @map("requested_score")
+  status            DisputeStatus        @default(PENDING)
+  priority          DisputePriority      @default(MEDIUM)
+  moderatorId       String?              @map("moderator_id")
+  moderator         User?                @relation("DisputeModerator", fields: [moderatorId], references: [id])
+  moderatorNotes    String?              @map("moderator_notes")
+  resolution        DisputeResolution?   @relation(fields: [resolutionId], references: [id])
+  resolutionId      String?              @map("resolution_id")
+  automatedResolution Boolean            @default(false) @map("automated_resolution")
+  submittedAt       DateTime             @default(now()) @map("submitted_at")
+  reviewedAt        DateTime?            @map("reviewed_at")
+  resolvedAt        DateTime?            @map("resolved_at")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([status, priority])
+  @@index([moderatorId])
+  @@index([submittedAt])
+  @@map("reputation_disputes")
+}
+
+model DisputeResolution {
+  id                  String               @id @default(cuid())
+  disputeId           String               @unique @map("dispute_id")
+  dispute             ReputationDispute    @relation(fields: [disputeId], references: [id])
+  finalScore          Int?                 @map("final_score")
+  scoreAdjustment     Int                  @map("score_adjustment")
+  resolutionType      ResolutionType       @map("resolution_type")
+  explanation         String
+  evidence            Json?                @map("evidence")
+  moderatorId         String?              @map("moderator_id")
+  moderator           User?                @relation("ResolutionModerator", fields: [moderatorId], references: [id])
+  approvedBy          String?              @map("approved_by")
+  approvalNotes       String?              @map("approval_notes")
+  isFinal             Boolean              @default(true) @map("is_final")
+  canAppeal           Boolean              @default(true) @map("can_appeal")
+  appealDeadline      DateTime?            @map("appeal_deadline")
+  resolvedAt          DateTime             @default(now()) @map("resolved_at")
+  createdAt           DateTime             @default(now()) @map("created_at")
+
+  @@map("dispute_resolutions")
+}
+
+model DisputeComment {
+  id         String            @id @default(cuid())
+  disputeId  String            @map("dispute_id")
+  dispute    ReputationDispute @relation(fields: [disputeId], references: [id])
+  authorId   String            @map("author_id")
+  author     User              @relation(fields: [authorId], references: [id])
+  content    String
+  isInternal Boolean           @default(false) @map("is_internal")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  @@index([disputeId, createdAt])
+  @@index([authorId])
+  @@map("dispute_comments")
+}
+
+model DisputeMetrics {
+  id                    String   @id @default(cuid())
+  totalDisputes         Int      @default(0) @map("total_disputes")
+  pendingDisputes       Int      @default(0) @map("pending_disputes")
+  resolvedDisputes      Int      @default(0) @map("resolved_disputes")
+  automatedResolutions  Int      @default(0) @map("automated_resolutions")
+  averageResolutionTime Float    @default(0) @map("average_resolution_time")
+  successRate           Float    @default(0) @map("success_rate")
+  appealRate            Float    @default(0) @map("appeal_rate")
+  period                String   @map("period") // 'daily', 'weekly', 'monthly'
+  periodStart           DateTime @map("period_start")
+  periodEnd             DateTime @map("period_end")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@unique([period, periodStart])
+  @@map("dispute_metrics")
+}
+
+enum DisputeType {
+  SCORE_CALCULATION_ERROR
+  UNFAIR_ACTIVITY_RECORDING
+  MISSING_ACTIVITY
+  DUPLICATE_ACTIVITY
+  DECAY_DISAGREEMENT
+  TECHNICAL_GLITCH
+  OTHER
+}
+
+enum DisputeStatus {
+  PENDING
+  UNDER_REVIEW
+  AWAITING_EVIDENCE
+  RESOLVED
+  REJECTED
+  APPEALED
+  CLOSED
+}
+
+enum DisputePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ResolutionType {
+  SCORE_ADJUSTMENT
+  ACTIVITY_CORRECTION
+  DECAY_REVERSAL
+  FULL_REVERSAL
+  MANUAL_OVERRIDE
+  AUTOMATED_CORRECTION
+  REJECTED
 }

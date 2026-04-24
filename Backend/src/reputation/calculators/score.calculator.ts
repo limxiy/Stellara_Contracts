@@ -1,12 +1,12 @@
-import { ReputationActivity } from '../reputation-activity.entity';
+import { ReputationActivity } from '@prisma/client';
 import {
-  ActivityType,
   FACTOR_WEIGHTS,
   MAX_SCORE,
   MIN_ACTIVITY_THRESHOLD,
   MIN_SCORE,
+  ActivityType,
 } from '../reputation.constants';
-import { timeDecayWeight } from './decay.calculator';
+import { activityDecayWeight } from './decay.calculator';
 
 // ---------------------------------------------------------------------------
 // Intermediate result types
@@ -17,12 +17,16 @@ export interface FactorScores {
   peerRatingScore: number;
   contributionSizeScore: number;
   communityFeedbackScore: number;
+  reliabilityScore: number;
+  expertiseScore: number;
+  communityScore: number;
 }
 
 export interface ScoreBreakdown extends FactorScores {
   compositeScore: number;
   activityCount: number;
   lowConfidence: boolean;
+  level: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,7 +40,7 @@ export interface ScoreBreakdown extends FactorScores {
  * A perfect 100% success rate yields 100; 0% yields 0.
  */
 export function calcSuccessRateScore(activities: ReputationActivity[], now: Date): number {
-  const transactionTypes = new Set([
+  const transactionTypes = new Set<ActivityType>([
     ActivityType.SUCCESSFUL_TRANSACTION,
     ActivityType.FAILED_TRANSACTION,
   ]);
@@ -48,7 +52,7 @@ export function calcSuccessRateScore(activities: ReputationActivity[], now: Date
   let weightedTotal = 0;
 
   for (const tx of transactions) {
-    const w = timeDecayWeight(tx.occurredAt, now);
+    const w = activityDecayWeight(tx.occurredAt, tx.activityType, now);
     weightedTotal += w;
     if (tx.activityType === ActivityType.SUCCESSFUL_TRANSACTION) {
       weightedSuccess += w;
@@ -72,8 +76,8 @@ export function calcPeerRatingScore(activities: ReputationActivity[], now: Date)
   let weightedTotal = 0;
 
   for (const r of ratings) {
-    const w = timeDecayWeight(r.occurredAt, now);
-    weightedSum += r.value * w;
+    const w = activityDecayWeight(r.occurredAt, r.activityType, now);
+    weightedSum += Number(r.value) * w;
     weightedTotal += w;
   }
 
@@ -88,13 +92,9 @@ export function calcPeerRatingScore(activities: ReputationActivity[], now: Date)
  * Contribution-size factor (0–100).
  *
  * Reward users who handle larger transactions and high-value contributions.
- * Uses a logarithmic scale so very large values don't dominate completely.
- *
- * Score = log10(1 + totalWeightedValue) / log10(1 + SCALE_CAP) × 100
- * where SCALE_CAP represents the value at which a user earns 100 points.
  */
 export function calcContributionSizeScore(activities: ReputationActivity[], now: Date): number {
-  const contributionTypes = new Set([
+  const contributionTypes = new Set<ActivityType>([
     ActivityType.SUCCESSFUL_TRANSACTION,
     ActivityType.HIGH_VALUE_CONTRIBUTION,
   ]);
@@ -104,10 +104,9 @@ export function calcContributionSizeScore(activities: ReputationActivity[], now:
 
   let weightedValue = 0;
   for (const a of relevant) {
-    weightedValue += a.value * timeDecayWeight(a.occurredAt, now);
+    weightedValue += Number(a.value) * activityDecayWeight(a.occurredAt, a.activityType, now);
   }
 
-  // SCALE_CAP: a user with this much weighted contribution value earns 100.
   const SCALE_CAP = 10_000;
   return clamp((Math.log10(1 + weightedValue) / Math.log10(1 + SCALE_CAP)) * 100);
 }
@@ -115,8 +114,7 @@ export function calcContributionSizeScore(activities: ReputationActivity[], now:
 /**
  * Community-feedback factor (0–100).
  *
- * Combines COMMUNITY_REVIEW ratings (normalised 1–5) and dispute outcomes
- * (DISPUTE_WON adds positive weight, DISPUTE_LOST subtracts).
+ * Combines COMMUNITY_REVIEW ratings and dispute outcomes.
  */
 export function calcCommunityFeedbackScore(activities: ReputationActivity[], now: Date): number {
   const reviews = activities.filter((a) => a.activityType === ActivityType.COMMUNITY_REVIEW);
@@ -127,26 +125,24 @@ export function calcCommunityFeedbackScore(activities: ReputationActivity[], now
 
   if (reviews.length === 0 && disputes.length === 0) return 50;
 
-  // Review sub-score (0–100), same normalisation as peer ratings.
   let reviewScore = 50;
   if (reviews.length > 0) {
     let wSum = 0,
       wTotal = 0;
     for (const r of reviews) {
-      const w = timeDecayWeight(r.occurredAt, now);
-      wSum += r.value * w;
+      const w = activityDecayWeight(r.occurredAt, r.activityType, now);
+      wSum += Number(r.value) * w;
       wTotal += w;
     }
     reviewScore = wTotal > 0 ? clamp(((wSum / wTotal - 1) / 4) * 100) : 50;
   }
 
-  // Dispute sub-score: net wins as a percentage of all disputes → 0–100.
   let disputeScore = 50;
   if (disputes.length > 0) {
     let wWon = 0,
       wLost = 0;
     for (const d of disputes) {
-      const w = timeDecayWeight(d.occurredAt, now);
+      const w = activityDecayWeight(d.occurredAt, d.activityType, now);
       if (d.activityType === ActivityType.DISPUTE_WON) wWon += w;
       else wLost += w;
     }
@@ -154,7 +150,6 @@ export function calcCommunityFeedbackScore(activities: ReputationActivity[], now
     disputeScore = total > 0 ? clamp((wWon / total) * 100) : 50;
   }
 
-  // Blend: reviews carry more weight than dispute outcomes.
   const reviewWeight = reviews.length > 0 ? 0.7 : 0;
   const disputeWeight = disputes.length > 0 ? 0.3 : 0;
   const totalWeight = reviewWeight + disputeWeight;
@@ -163,18 +158,102 @@ export function calcCommunityFeedbackScore(activities: ReputationActivity[], now
   return clamp((reviewScore * reviewWeight + disputeScore * disputeWeight) / totalWeight);
 }
 
+/**
+ * Reliability factor (0–100).
+ *
+ * Based on milestone completion vs delays.
+ */
+export function calcReliabilityScore(activities: ReputationActivity[], now: Date): number {
+  const reliabilityTypes = new Set<ActivityType>([
+    ActivityType.MILESTONE_COMPLETED,
+    ActivityType.MILESTONE_DELAYED,
+  ]);
+
+  const relevant = activities.filter((a) => reliabilityTypes.has(a.activityType));
+  if (relevant.length === 0) return 50;
+
+  let weightedOnTime = 0;
+  let weightedTotal = 0;
+
+  for (const a of relevant) {
+    const w = timeDecayWeight(a.occurredAt, now);
+    weightedTotal += w;
+    if (a.activityType === ActivityType.MILESTONE_COMPLETED) {
+      weightedOnTime += w;
+    }
+  }
+
+  return weightedTotal === 0 ? 50 : clamp((weightedOnTime / weightedTotal) * 100);
+}
+
+/**
+ * Expertise factor (0–100).
+ *
+ * Based on successful transactions, high-value contributions, and expert endorsements.
+ */
+export function calcExpertiseScore(activities: ReputationActivity[], now: Date): number {
+  const expertiseTypes = new Set<ActivityType>([
+    ActivityType.SUCCESSFUL_TRANSACTION,
+    ActivityType.HIGH_VALUE_CONTRIBUTION,
+    ActivityType.EXPERT_ENDORSEMENT,
+  ]);
+
+  const relevant = activities.filter((a) => expertiseTypes.has(a.activityType));
+  if (relevant.length === 0) return 0;
+
+  let weightedScore = 0;
+  for (const a of relevant) {
+    const w = timeDecayWeight(a.occurredAt, now);
+    let val = Number(a.value);
+    if (a.activityType === ActivityType.EXPERT_ENDORSEMENT) {
+      val *= 10; // Endorsements are highly valuable
+    }
+    weightedScore += val * w;
+  }
+
+  const EXPERTISE_CAP = 25_000;
+  return clamp((Math.log10(1 + weightedScore) / Math.log10(1 + EXPERTISE_CAP)) * 100);
+}
+
+/**
+ * Community Contribution factor (0–100).
+ *
+ * Based on peer ratings, community reviews, and governance participation.
+ */
+export function calcCommunityContributionScore(activities: ReputationActivity[], now: Date): number {
+  const communityTypes = new Set<ActivityType>([
+    ActivityType.PEER_RATING,
+    ActivityType.COMMUNITY_REVIEW,
+    ActivityType.GOVERNANCE_VOTE,
+  ]);
+
+  const relevant = activities.filter((a) => communityTypes.has(a.activityType));
+  if (relevant.length === 0) return 50;
+
+  let weightedScore = 0;
+  let weightedTotal = 0;
+
+  for (const a of relevant) {
+    const w = timeDecayWeight(a.occurredAt, now);
+    weightedTotal += w;
+    let val = Number(a.value);
+    if (a.activityType === ActivityType.GOVERNANCE_VOTE) {
+      val = 5; // Fixed value for voting
+    }
+    weightedScore += val * w;
+  }
+
+  if (weightedTotal === 0) return 50;
+  const meanVal = weightedScore / weightedTotal;
+  return clamp(((meanVal - 1) / 4) * 100);
+}
+
 // ---------------------------------------------------------------------------
 // Composite calculator
 // ---------------------------------------------------------------------------
 
 /**
  * Compute the full multi-factor reputation score for a set of activities.
- *
- * This is a pure function with no side effects — safe to call from tests,
- * jobs, or API handlers without any DB interaction.
- *
- * @param activities  All reputation activities for the subject.
- * @param now         Reference timestamp (injectable for deterministic tests).
  */
 export function calculateReputationScore(
   activities: ReputationActivity[],
@@ -187,13 +266,21 @@ export function calculateReputationScore(
   const peerRatingScore = calcPeerRatingScore(activities, now);
   const contributionSizeScore = calcContributionSizeScore(activities, now);
   const communityFeedbackScore = calcCommunityFeedbackScore(activities, now);
+  const reliabilityScore = calcReliabilityScore(activities, now);
+  const expertiseScore = calcExpertiseScore(activities, now);
+  const communityScore = calcCommunityContributionScore(activities, now);
 
   const compositeScore = clamp(
     successRateScore * FACTOR_WEIGHTS.SUCCESS_RATE +
       peerRatingScore * FACTOR_WEIGHTS.PEER_RATING +
       contributionSizeScore * FACTOR_WEIGHTS.CONTRIBUTION_SIZE +
-      communityFeedbackScore * FACTOR_WEIGHTS.COMMUNITY_FEEDBACK,
+      communityFeedbackScore * FACTOR_WEIGHTS.COMMUNITY_FEEDBACK +
+      reliabilityScore * FACTOR_WEIGHTS.RELIABILITY +
+      expertiseScore * FACTOR_WEIGHTS.EXPERTISE +
+      communityScore * FACTOR_WEIGHTS.COMMUNITY_CONTRIBUTION,
   );
+
+  const level = REPUTATION_LEVELS.find((l) => compositeScore >= l.minScore)?.level ?? 'BRONZE';
 
   return {
     compositeScore: round(compositeScore),
@@ -201,8 +288,12 @@ export function calculateReputationScore(
     peerRatingScore: round(peerRatingScore),
     contributionSizeScore: round(contributionSizeScore),
     communityFeedbackScore: round(communityFeedbackScore),
+    reliabilityScore: round(reliabilityScore),
+    expertiseScore: round(expertiseScore),
+    communityScore: round(communityScore),
     activityCount,
     lowConfidence,
+    level,
   };
 }
 

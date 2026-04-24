@@ -5,8 +5,8 @@ import {
   calcCommunityFeedbackScore,
   calculateReputationScore,
 } from './score.calculator';
-import { ReputationActivity } from '../reputation-activity.entity';
-import { ActivityType, MIN_ACTIVITY_THRESHOLD } from '../Reputation.constants';
+import { ReputationActivity, ActivityType } from '@prisma/client';
+import { MIN_ACTIVITY_THRESHOLD } from '../reputation.constants';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,7 +26,7 @@ const makeActivity = (type: ActivityType, value: number, daysOld = 0): Reputatio
     referenceId: null,
     occurredAt: daysAgo(daysOld),
     createdAt: daysAgo(daysOld),
-  }) as ReputationActivity;
+  }) as any;
 
 const success = (daysOld = 0) => makeActivity(ActivityType.SUCCESSFUL_TRANSACTION, 100, daysOld);
 const failure = (daysOld = 0) => makeActivity(ActivityType.FAILED_TRANSACTION, 100, daysOld);
