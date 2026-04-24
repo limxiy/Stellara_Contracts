@@ -15,7 +15,6 @@ import { NotificationModule } from './notification/notification.module';
 import { StorageModule } from './storage/storage.module';
 import { AppCacheModule } from './cache/cache.module';
 import { PrismaModule } from './prisma.module';
-
 // Feature Modules
 import { InsuranceModule } from '../insurance/insurance.module';
 import { RegenerativeFinanceModule } from './regenerative-finance/regenerative-finance.module';
@@ -68,7 +67,6 @@ import { AppLogger } from './common/logger/app.logger';
     SupportModule,
     MultisigModule,
     AppCacheModule,
-
   ],
   controllers: [AppController],
   providers: [AppService, AppLogger, ApiVersionMiddleware, TimeoutMiddleware],
