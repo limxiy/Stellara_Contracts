@@ -1,9 +1,20 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Module, APP_INTERCEPTOR } from '@nestjs/common';
 import { CacheService } from './cache.service';
+import { CacheInvalidationService } from './cache-invalidation.service';
+import { CacheInvalidationInterceptor } from './cache-invalidation.interceptor';
+import { CacheController } from './cache.controller';
 
 @Global()
 @Module({
-  providers: [CacheService],
-  exports: [CacheService],
+  controllers: [CacheController],
+  providers: [
+    CacheService,
+    CacheInvalidationService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: CacheInvalidationInterceptor,
+    },
+  ],
+  exports: [CacheService, CacheInvalidationService],
 })
 export class AppCacheModule {}
