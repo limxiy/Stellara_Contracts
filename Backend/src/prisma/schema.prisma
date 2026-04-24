@@ -1,0 +1,18 @@
+model Webhook {
+  id    String @id @default(uuid())
+  url   String
+  event String
+}
+
+model WebhookLog {
+  id     String @id @default(uuid())
+  url    String
+  status String
+}
+
+model EventFlow {
+  id            String @id @default(uuid())
+  correlationId String
+  event         String
+  contract      String
+}
