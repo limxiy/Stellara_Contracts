@@ -4,7 +4,9 @@ import { ConfigModule } from '@nestjs/config';
 import { IndexerService } from './services/indexer.service';
 import { LedgerTrackerService } from './services/ledger-tracker.service';
 import { EventHandlerService } from './services/event-handler.service';
+import { ReorgHandlerService } from './services/reorg-handler.service';
 import { ProjectMetadataService } from './services/project-metadata.service';
+import { ReorgMonitoringController } from './controllers/reorg-monitoring.controller';
 import { DatabaseModule } from '../database.module';
 import { NotificationModule } from '../notification/notification.module';
 import { ReputationModule } from '../reputation/reputation.module';
@@ -33,6 +35,9 @@ import stellarConfig, { indexerConfig } from '../config/stellar.config';
     ConfigModule.forFeature(stellarConfig),
     ConfigModule.forFeature(indexerConfig),
   ],
+  controllers: [
+    ReorgMonitoringController,
+  ],
   providers: [
     // Core indexer service
     IndexerService,
@@ -40,6 +45,8 @@ import stellarConfig, { indexerConfig } from '../config/stellar.config';
     LedgerTrackerService,
     // Event processing
     EventHandlerService,
+    // Reorg handling
+    ReorgHandlerService,
     ProjectMetadataService,
   ],
   exports: [
@@ -50,4 +57,4 @@ import stellarConfig, { indexerConfig } from '../config/stellar.config';
     ProjectMetadataService,
   ],
 })
-export class IndexerModule {}
+export class IndexerModule { }

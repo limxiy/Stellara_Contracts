@@ -5,6 +5,7 @@ import * as CircuitBreaker from 'opossum';
 import { PrismaService } from '../../prisma.service';
 import { LedgerTrackerService } from './ledger-tracker.service';
 import { EventHandlerService } from './event-handler.service';
+import { ReorgHandlerService } from './reorg-handler.service';
 import { MetricsService } from '../../metrics/metrics.service';
 import { NotificationService } from '../../notification/services/notification.service';
 import { SorobanEvent, ParsedContractEvent, ContractEventType } from '../types/event-types';
@@ -54,6 +55,7 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly ledgerTracker: LedgerTrackerService,
     private readonly eventHandler: EventHandlerService,
+    private readonly reorgHandler: ReorgHandlerService,
     private readonly metricsService: MetricsService,
     private readonly notificationService: NotificationService,
   ) {
@@ -321,20 +323,27 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       const cursor = await this.ledgerTracker.getLastCursor();
       const startLedger = cursor ? cursor.lastLedgerSeq + 1 : 1;
 
-      // Get latest ledger from network
+      // Get latest ledger from network with hash information
       const latestLedger = await this.getLatestLedger();
+      const latestLedgerInfo = await this.getLedgerInfo(latestLedger);
+
+      // Check for reorgs before processing
+      const safeLedger = await this.reorgHandler.detectAndHandleReorg(latestLedgerInfo);
+
+      // Adjust start ledger if reorg occurred
+      const adjustedStartLedger = Math.max(safeLedger + 1, startLedger);
 
       // Check if there's anything to process
-      if (startLedger > latestLedger) {
-        this.logger.debug(`No new ledgers. Current: ${startLedger - 1}, Latest: ${latestLedger}`);
+      if (adjustedStartLedger > latestLedger) {
+        this.logger.debug(`No new ledgers. Current: ${adjustedStartLedger - 1}, Latest: ${latestLedger}`);
         this.metricsService.recordIndexerPoll('noop', 0);
         return;
       }
 
-      this.logger.log(`Polling events from ledger ${startLedger} to ${latestLedger}`);
+      this.logger.log(`Polling events from ledger ${adjustedStartLedger} to ${latestLedger}`);
 
       // Fetch events with retry logic
-      const events = await this.fetchEventsWithRetry(startLedger, latestLedger);
+      const events = await this.fetchEventsWithRetry(adjustedStartLedger, latestLedger);
 
       if (events.length === 0) {
         this.logger.debug('No events found in ledger range');
@@ -367,8 +376,8 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // Update cursor to latest processed ledger
-      await this.ledgerTracker.updateCursor(latestLedger);
+      // Update cursor to latest processed ledger with hash
+      await this.ledgerTracker.updateCursor(latestLedger, latestLedgerInfo.hash);
 
       // Log progress
       await this.ledgerTracker.logProgress(latestLedger, latestLedger, processedCount);
@@ -621,19 +630,34 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get ledger info
+   * Get ledger info with hash for reorg detection
    */
   private async getLedgerInfo(sequence: number): Promise<LedgerInfo> {
-    // Note: This would use getLedger RPC method
-    // For now, return basic info
-    return {
-      sequence,
-      hash: '', // Would be populated from RPC
-      prevHash: '',
-      closedAt: new Date(),
-      successfulTransactionCount: 0,
-      failedTransactionCount: 0,
-    };
+    try {
+      // Use Stellar RPC to get detailed ledger information
+      const ledger = await this.rpc.getLedger({ sequence });
+
+      return {
+        sequence: ledger.sequence,
+        hash: ledger.hash,
+        prevHash: ledger.prevHash,
+        closedAt: new Date(ledger.closedAt),
+        successfulTransactionCount: ledger.successfulTransactionCount || 0,
+        failedTransactionCount: ledger.failedTransactionCount || 0,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get ledger info for sequence ${sequence}: ${error.message}`);
+
+      // Fallback to basic info without hash (reorg detection won't work)
+      return {
+        sequence,
+        hash: '',
+        prevHash: '',
+        closedAt: new Date(),
+        successfulTransactionCount: 0,
+        failedTransactionCount: 0,
+      };
+    }
   }
 
   /**
