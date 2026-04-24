@@ -31,21 +31,36 @@ model User {
   notificationSettings NotificationSetting[]
   notifications        Notification[]
   insurancePolicies    InsurancePolicy[]
-  notifications        Notification[]
   weeklySummaries      WeeklyReputationSummary[]
 
 
   // Snapshot Relations
   userSnapshots        ReputationUserSnapshot[]
   reputationTrends     ReputationTrend[]
+  // Reputation Activity Relations
+  reputationActivitiesAsSubject ReputationActivity[] @relation("ReputationSubject")
+  reputationActivitiesAsActor   ReputationActivity[] @relation("ReputationActor")
+  reputationScoreRecord         ReputationScore?
+
+  // Competition Relations
+  competitionParticipants CompetitionParticipant[]
+  competitionLeaderboards CompetitionLeaderboard[]
+  competitionAchievements CompetitionAchievement[]
+  antiCheatFlags          AntiCheatFlag[]
+  prizeDistributions      PrizeDistribution[]
+
   // Dispute Relations
   reputationDisputes   ReputationDispute[]
   moderatedDisputes    ReputationDispute[] @relation("DisputeModerator")
   disputeComments      DisputeComment[]
   resolvedDisputes     DisputeResolution[] @relation("ResolutionModerator")
 
-  // Auth Relations
-  roles                UserRole[]
+  // MFA fields
+  mfaEnabled      Boolean   @default(false) @map("mfa_enabled")
+  mfaSecret       String?   @map("mfa_secret")
+  mfaVerified     Boolean   @default(false) @map("mfa_verified")
+  backupCodes     String[]  @default([]) @map("backup_codes")
+  mfaEnforcedAt   DateTime? @map("mfa_enforced_at")
 
   @@map("users")
 }
@@ -69,7 +84,7 @@ model Project {
   // Relations
   contributions Contribution[]
   milestones    Milestone[]
-  // publicGoodsProject PublicGoodsProject?  // TODO: Define PublicGoodsProject model
+  publicGoodsProjects PublicGoodsProject[]
 
   @@map("projects")
 }
@@ -118,6 +133,24 @@ model ReputationHistory {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("reputation_history")
+}
+
+enum ActivityType {
+  SUCCESSFUL_TRANSACTION
+  FAILED_TRANSACTION
+  PEER_RATING
+  COMMUNITY_REVIEW
+  DISPUTE_WON
+  DISPUTE_LOST
+  HIGH_VALUE_CONTRIBUTION
+  PROJECT_COMPLETION
+  MILESTONE_ACHIEVEMENT
+  SOCIAL_INTERACTION
+  HELPFUL_COMMENT
+  MILESTONE_COMPLETED
+  MILESTONE_DELAYED
+  EXPERT_ENDORSEMENT
+  GOVERNANCE_VOTE
 }
 
 model ReputationActivity {
@@ -175,8 +208,6 @@ model ReputationDecayHistory {
   @@index([userId])
   @@index([occurredAt])
   @@map("reputation_decay_history")
-}
-
 }
 
 model Category {
@@ -404,7 +435,7 @@ enum AssessorRole {
   DISPUTE_RESOLVER
 }
 
-enum DisputeStatus {
+enum ClaimDisputeStatus {
   OPEN
   UNDER_REVIEW
   RESOLVED
@@ -493,6 +524,7 @@ model Claim {
   evidence     ClaimEvidence[]
   assessments  ClaimAssessment[]
   disputes     ClaimDispute[]
+  reinsuranceClaims ReinsuranceClaim[] @relation("OriginalClaim")
 
   @@map("claims")
 }
@@ -551,7 +583,7 @@ model ClaimDispute {
   claim       Claim         @relation(fields: [claimId], references: [id])
   raisedBy    String        @map("raised_by")
   reason      String
-  status      DisputeStatus @default(OPEN)
+  status      ClaimDisputeStatus @default(OPEN)
   resolution  String?
   resolvedBy  String?       @map("resolved_by")
   resolvedAt  DateTime?     @map("resolved_at")
@@ -634,7 +666,7 @@ model ReinsuranceClaim {
   contractId      String                @map("contract_id")
   contract        ReinsuranceContract   @relation(fields: [contractId], references: [id])
   originalClaimId String?               @map("original_claim_id")
-  originalClaim   Claim?                @relation(fields: [originalClaimId], references: [id])
+  originalClaim   Claim?                @relation("OriginalClaim", fields: [originalClaimId], references: [id])
   
   // Claim details
   claimAmount     Decimal               @map("claim_amount")
@@ -661,6 +693,8 @@ model ReinsuranceClaim {
   @@index([contractId, status])
   @@index([originalClaimId])
   @@map("reinsurance_claims")
+}
+
 model ReputationTip {
   id          String   @id @default(cuid())
   category    String   // e.g., "transactions", "community", "projects"
@@ -725,6 +759,8 @@ model PoolRebalanceHistory {
 
   @@index([poolId, executedAt])
   @@map("pool_rebalance_history")
+}
+
 enum AccountingProvider {
   QUICKBOOKS
   XERO
@@ -759,7 +795,7 @@ model FundingRound {
 }
 
 model PublicGoodsProject {
-  id                String            @id @id @default(cuid())
+  id                String            @id @default(cuid())
   projectId         String?           @unique @map("project_id")
   project           Project?          @relation(fields: [projectId], references: [id])
   title             String
@@ -1358,6 +1394,8 @@ enum ComparisonType {
   MONTH_OVER_MONTH
   WEEK_OVER_WEEK
   CUSTOM
+}
+
 // Reputation Dispute Models
 
 model ReputationDispute {
@@ -1377,14 +1415,17 @@ model ReputationDispute {
   moderatorId       String?              @map("moderator_id")
   moderator         User?                @relation("DisputeModerator", fields: [moderatorId], references: [id])
   moderatorNotes    String?              @map("moderator_notes")
-  resolution        DisputeResolution?   @relation(fields: [resolutionId], references: [id])
-  resolutionId      String?              @map("resolution_id")
+  resolution        DisputeResolution?
+  resolutionId      String?              @unique @map("resolution_id")
   automatedResolution Boolean            @default(false) @map("automated_resolution")
   submittedAt       DateTime             @default(now()) @map("submitted_at")
   reviewedAt        DateTime?            @map("reviewed_at")
   resolvedAt        DateTime?            @map("resolved_at")
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  // Relations
+  disputeComments DisputeComment[]
 
   @@index([userId, status])
   @@index([status, priority])
