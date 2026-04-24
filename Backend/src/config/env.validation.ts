@@ -184,6 +184,9 @@ class EnvironmentVariables {
   @IsOptional()
   @IsNumber()
   PROJECT_METADATA_CACHE_MAX_ENTRIES?: number;
+
+  @IsString()
+  MFA_ENCRYPTION_KEY: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

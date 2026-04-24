@@ -24,6 +24,7 @@ import { MultisigModule } from './multisig/multisig.module';
 import { NonceModule } from './nonce/nonce.module';
 import { V1Module } from './modules/v1/v1.module';
 import { V2Module } from './modules/v2/v2.module';
+import { MfaModule } from './mfa/mfa.module';
 // Reliability & Observability Modules (#680, #681, #682, #683)
 import { CircuitBreakerModule } from './circuit-breaker/circuit-breaker.module';
 import { TracingModule } from './tracing/tracing.module';
@@ -84,6 +85,7 @@ import { AppLogger } from './common/logger/app.logger';
     BulkModule,
     FeatureFlagsModule,
     StellaraGraphQLModule,
+    MfaModule,
   ],
   controllers: [AppController],
   providers: [AppService, AppLogger, ApiVersionMiddleware, TimeoutMiddleware],
