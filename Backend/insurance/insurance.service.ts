@@ -15,7 +15,16 @@ export class InsuranceService {
   ) {}
 
   async purchasePolicy(userId: string, poolId: string, riskType: RiskType, coverageAmount: number) {
-    const premium = this.pricing.calculatePremium(riskType, coverageAmount);
+    // Use dynamic pricing calculation
+    const pricingBreakdown = await this.pricing.calculateDynamicPremium(
+      userId,
+      poolId,
+      riskType,
+      coverageAmount,
+    );
+
+    const premium = pricingBreakdown.finalPremium;
+    
     await this.pools.lockCapital(poolId, coverageAmount);
 
     return this.prisma.insurancePolicy.create({
