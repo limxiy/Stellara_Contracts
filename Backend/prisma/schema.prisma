@@ -28,7 +28,9 @@ model User {
   createdProjects      Project[]            @relation("ProjectCreator")
   contributions        Contribution[]
   reputationHistory    ReputationHistory[]
-  notificationSettings NotificationSetting?
+  notificationSettings NotificationSetting[]
+  notifications        Notification[]
+  insurancePolicies    InsurancePolicy[]
   notifications        Notification[]
   weeklySummaries      WeeklyReputationSummary[]
 
@@ -64,7 +66,7 @@ model Project {
   // Relations
   contributions Contribution[]
   milestones    Milestone[]
-  publicGoodsProject PublicGoodsProject?
+  // publicGoodsProject PublicGoodsProject?  // TODO: Define PublicGoodsProject model
 
   @@map("projects")
 }
@@ -346,6 +348,29 @@ enum RiskType {
   PARAMETRIC_WEATHER
 }
 
+enum PoolRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum PoolAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+  EMERGENCY
+}
+
+enum PoolAlertType {
+  LOW_LIQUIDITY
+  HIGH_UTILIZATION
+  EXPOSURE_LIMIT_REACHED
+  HEALTH_SCORE_DROP
+  REBALANCE_REQUIRED
+  LARGE_CLAIM
+}
+
 enum PolicyStatus {
   ACTIVE
   EXPIRED
@@ -355,9 +380,32 @@ enum PolicyStatus {
 
 enum ClaimStatus {
   PENDING
+  REVIEWING
   APPROVED
   REJECTED
   PAID
+  DISPUTED
+}
+
+enum AssessmentStage {
+  INITIAL_REVIEW
+  DOCUMENT_VERIFICATION
+  RISK_ASSESSMENT
+  FINAL_APPROVAL
+}
+
+enum AssessorRole {
+  JUNIOR_ASSESSOR
+  SENIOR_ASSESSOR
+  CLAIMS_MANAGER
+  DISPUTE_RESOLVER
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  ESCALATED
 }
 
 model InsurancePolicy {
@@ -381,14 +429,33 @@ model InsurancePolicy {
 model InsurancePool {
   id            String   @id @default(cuid())
   name          String
+  description   String?  @map("description")
   capital       Decimal  @default(0)
   lockedCapital Decimal  @default(0) @map("locked_capital")
+  totalPayouts  Decimal  @default(0) @map("total_payouts")
+  totalPremiums Decimal  @default(0) @map("total_premiums")
+  
+  // Risk management fields
+  maxExposureLimit    Decimal?  @map("max_exposure_limit")
+  currentExposure     Decimal   @default(0) @map("current_exposure")
+  riskLevel           PoolRiskLevel @default(LOW) @map("risk_level")
+  utilizationThreshold Decimal  @default(0.75) @map("utilization_threshold")
+  
+  // Health monitoring
+  healthScore         Int       @default(100) @map("health_score")
+  isActive            Boolean   @default(true) @map("is_active")
+  isRebalancing       Boolean   @default(false) @map("is_rebalancing")
+  lastRebalanceAt     DateTime? @map("last_rebalance_at")
+  lastHealthCheckAt   DateTime? @map("last_health_check_at")
+  
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   insurancePolicies    InsurancePolicy[]
   reinsuranceContracts ReinsuranceContract[]
   claims               Claim[]
+  poolAlerts           PoolAlert[]
+  rebalanceHistory     PoolRebalanceHistory[]
 
   @@map("insurance_pools")
 }
@@ -402,22 +469,195 @@ model Claim {
   claimAmount  Decimal     @map("claim_amount")
   status       ClaimStatus @default(PENDING)
   payoutAmount Decimal?    @map("payout_amount")
+  
+  // Workflow fields
+  currentStage AssessmentStage? @map("current_stage")
+  isParametric Boolean     @default(false) @map("is_parametric")
+  parametricTriggerData Json? @map("parametric_trigger_data")
+  assessorId   String?     @map("assessor_id")
+  assessor     Assessor?   @relation(fields: [assessorId], references: [id])
+  
+  // Timestamps
+  submittedAt  DateTime    @default(now()) @map("submitted_at")
+  reviewedAt   DateTime?   @map("reviewed_at")
+  resolvedAt   DateTime?   @map("resolved_at")
+  paidAt       DateTime?   @map("paid_at")
+  
   createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  evidence     ClaimEvidence[]
+  assessments  ClaimAssessment[]
+  disputes     ClaimDispute[]
 
   @@map("claims")
 }
 
-model ReinsuranceContract {
-  id             String   @id @default(cuid())
-  poolId         String   @map("pool_id")
-  pool           InsurancePool @relation(fields: [poolId], references: [id])
-  coverageLimit  Decimal  @map("coverage_limit")
-  premiumRate    Decimal  @map("premium_rate")
-  createdAt      DateTime @default(now()) @map("created_at")
+model Assessor {
+  id              String       @id @default(cuid())
+  userId          String       @map("user_id")
+  role            AssessorRole
+  specialization  String?      @map("specialization")
+  isActive        Boolean      @default(true) @map("is_active")
+  workload        Int          @default(0)
+  maxConcurrentClaims Int      @default(10) @map("max_concurrent_claims")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
+  // Relations
+  assignedClaims  Claim[]
+  assessments     ClaimAssessment[]
+
+  @@map("assessors")
+}
+
+model ClaimEvidence {
+  id          String   @id @default(cuid())
+  claimId     String   @map("claim_id")
+  claim       Claim    @relation(fields: [claimId], references: [id])
+  ipfsHash    String   @map("ipfs_hash")
+  documentType String  @map("document_type")
+  description String?
+  uploadedBy  String   @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("claim_evidence")
+}
+
+model ClaimAssessment {
+  id              String           @id @default(cuid())
+  claimId         String           @map("claim_id")
+  claim           Claim            @relation(fields: [claimId], references: [id])
+  assessorId      String           @map("assessor_id")
+  assessor        Assessor         @relation(fields: [assessorId], references: [id])
+  stage           AssessmentStage
+  decision        ClaimStatus?
+  score           Int?             @map("assessment_score")
+  notes           String?
+  parametricScore Decimal?         @map("parametric_score")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("claim_assessments")
+}
+
+model ClaimDispute {
+  id          String        @id @default(cuid())
+  claimId     String        @map("claim_id")
+  claim       Claim         @relation(fields: [claimId], references: [id])
+  raisedBy    String        @map("raised_by")
+  reason      String
+  status      DisputeStatus @default(OPEN)
+  resolution  String?
+  resolvedBy  String?       @map("resolved_by")
+  resolvedAt  DateTime?     @map("resolved_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  @@map("claim_disputes")
+}
+
+// Reinsurance Enums
+enum ReinsuranceType {
+  QUOTA_SHARE
+  SURPLUS
+  EXCESS_OF_LOSS
+  STOP_LOSS
+  FACULTATIVE
+  TREATY
+}
+
+enum ReinsuranceStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  SUSPENDED
+}
+
+enum ReinsuranceClaimStatus {
+  PENDING
+  SUBMITTED_TO_REINSURER
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  SETTLED
+  DISPUTED
+}
+
+model ReinsuranceContract {
+  id             String           @id @default(cuid())
+  poolId         String           @map("pool_id")
+  pool           InsurancePool    @relation(fields: [poolId], references: [id])
+  
+  // Contract details
+  reinsurerName  String           @map("reinsurer_name")
+  reinsurerContact Json?          @map("reinsurer_contact")
+  type           ReinsuranceType  @default(QUOTA_SHARE)
+  coverageLimit  Decimal          @map("coverage_limit")
+  premiumRate    Decimal          @map("premium_rate")
+  deductible     Decimal          @default(0)
+  attachmentPoint Decimal?       @map("attachment_point")
+  exhaustionPoint Decimal?       @map("exhaustion_point")
+  
+  // Coverage terms
+  startDate      DateTime         @map("start_date")
+  endDate        DateTime         @map("end_date")
+  status         ReinsuranceStatus @default(ACTIVE)
+  
+  // Financial tracking
+  totalPremiumsPaid Decimal      @default(0) @map("total_premiums_paid")
+  totalClaimsReceived Decimal    @default(0) @map("total_claims_received")
+  totalClaimsPaid Decimal        @default(0) @map("total_claims_paid")
+  availableCoverage Decimal      @map("available_coverage")
+  
+  // Terms and conditions
+  terms          String?
+  notes          String?
+  metadata       Json?
+  
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  claims         ReinsuranceClaim[]
+
+  @@index([poolId, status])
+  @@index([startDate, endDate])
   @@map("reinsurance_contracts")
 }
 
+model ReinsuranceClaim {
+  id              String                @id @default(cuid())
+  contractId      String                @map("contract_id")
+  contract        ReinsuranceContract   @relation(fields: [contractId], references: [id])
+  originalClaimId String?               @map("original_claim_id")
+  originalClaim   Claim?                @relation(fields: [originalClaimId], references: [id])
+  
+  // Claim details
+  claimAmount     Decimal               @map("claim_amount")
+  requestedAmount Decimal               @map("requested_amount")
+  approvedAmount  Decimal?              @map("approved_amount")
+  paidAmount      Decimal?              @map("paid_amount")
+  
+  // Status tracking
+  status          ReinsuranceClaimStatus @default(PENDING)
+  rejectionReason String?               @map("rejection_reason")
+  
+  // Workflow tracking
+  submittedToReinsurerAt DateTime?      @map("submitted_to_reinsurer_at")
+  reinsurerResponseAt  DateTime?        @map("reinsurer_response_at")
+  settledAt           DateTime?         @map("settled_at")
+  
+  // Documentation
+  supportingDocuments Json?             @map("supporting_documents")
+  reinsurerNotes      String?           @map("reinsurer_notes")
+  
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  @@index([contractId, status])
+  @@index([originalClaimId])
+  @@map("reinsurance_claims")
 model ReputationTip {
   id          String   @id @default(cuid())
   category    String   // e.g., "transactions", "community", "projects"
@@ -452,10 +692,36 @@ model WeeklyReputationSummary {
   @@map("weekly_reputation_summaries")
 }
 
-  COMPLETED
-  FAILED
+model PoolAlert {
+  id          String           @id @default(cuid())
+  poolId      String           @map("pool_id")
+  pool        InsurancePool    @relation(fields: [poolId], references: [id])
+  alertType   PoolAlertType    @map("alert_type")
+  severity    PoolAlertSeverity
+  message     String
+  metadata    Json?
+  isResolved  Boolean          @default(false) @map("is_resolved")
+  resolvedAt  DateTime?        @map("resolved_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@index([poolId, isResolved])
+  @@index([severity, createdAt])
+  @@map("pool_alerts")
 }
 
+model PoolRebalanceHistory {
+  id              String   @id @default(cuid())
+  poolId          String   @map("pool_id")
+  pool            InsurancePool @relation(fields: [poolId], references: [id])
+  reason          String
+  actionsTaken    Json     @map("actions_taken")
+  previousState   Json     @map("previous_state")
+  newState        Json     @map("new_state")
+  executedBy      String?  @map("executed_by")
+  executedAt      DateTime @default(now()) @map("executed_at")
+
+  @@index([poolId, executedAt])
+  @@map("pool_rebalance_history")
 enum AccountingProvider {
   QUICKBOOKS
   XERO
