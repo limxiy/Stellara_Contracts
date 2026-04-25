@@ -5,8 +5,15 @@ import { IndexerService } from './services/indexer.service';
 import { LedgerTrackerService } from './services/ledger-tracker.service';
 import { EventHandlerService } from './services/event-handler.service';
 import { ReorgHandlerService } from './services/reorg-handler.service';
+import { IndexerStateService } from './services/indexer-state.service';
+import { ContractRegistryService } from './services/contract-registry.service';
+import { AbiParserService } from './services/abi-parser.service';
+import { EventReplayService } from './services/event-replay.service';
 import { ProjectMetadataService } from './services/project-metadata.service';
 import { ReorgMonitoringController } from './controllers/reorg-monitoring.controller';
+import { IndexerControlController } from './controllers/indexer-control.controller';
+import { ContractRegistryController } from './controllers/contract-registry.controller';
+import { EventReplayController } from './controllers/event-replay.controller';
 import { DatabaseModule } from '../database.module';
 import { NotificationModule } from '../notification/notification.module';
 import { ReputationModule } from '../reputation/reputation.module';
@@ -37,6 +44,9 @@ import stellarConfig, { indexerConfig } from '../config/stellar.config';
   ],
   controllers: [
     ReorgMonitoringController,
+    IndexerControlController,
+    ContractRegistryController,
+    EventReplayController,
   ],
   providers: [
     // Core indexer service
@@ -47,6 +57,13 @@ import stellarConfig, { indexerConfig } from '../config/stellar.config';
     EventHandlerService,
     // Reorg handling
     ReorgHandlerService,
+    // State management
+    IndexerStateService,
+    // Contract registry and ABI management
+    ContractRegistryService,
+    AbiParserService,
+    // Event replay functionality
+    EventReplayService,
     ProjectMetadataService,
   ],
   exports: [
@@ -54,6 +71,10 @@ import stellarConfig, { indexerConfig } from '../config/stellar.config';
     IndexerService,
     LedgerTrackerService,
     EventHandlerService,
+    IndexerStateService,
+    ContractRegistryService,
+    AbiParserService,
+    EventReplayService,
     ProjectMetadataService,
   ],
 })

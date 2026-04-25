@@ -6,6 +6,8 @@ import { PrismaService } from '../../prisma.service';
 import { LedgerTrackerService } from './ledger-tracker.service';
 import { EventHandlerService } from './event-handler.service';
 import { ReorgHandlerService } from './reorg-handler.service';
+import { IndexerStateService } from './indexer-state.service';
+import { AbiParserService } from './abi-parser.service';
 import { MetricsService } from '../../metrics/metrics.service';
 import { NotificationService } from '../../notification/services/notification.service';
 import { SorobanEvent, ParsedContractEvent, ContractEventType } from '../types/event-types';
@@ -56,6 +58,8 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
     private readonly ledgerTracker: LedgerTrackerService,
     private readonly eventHandler: EventHandlerService,
     private readonly reorgHandler: ReorgHandlerService,
+    private readonly indexerStateService: IndexerStateService,
+    private readonly abiParserService: AbiParserService,
     private readonly metricsService: MetricsService,
     private readonly notificationService: NotificationService,
   ) {
@@ -255,6 +259,9 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       const startLedger = await this.ledgerTracker.getStartLedger(latestLedger);
       this.logger.log(`Starting indexing from ledger ${startLedger}`);
 
+      // Initialize indexer state
+      await this.indexerStateService.initializeState(startLedger - 1);
+
       // Trigger initial sync
       await this.pollEvents();
     } catch (error) {
@@ -316,6 +323,13 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Check if indexer is paused
+    const state = await this.indexerStateService.getState();
+    if (state && state.status === 'paused') {
+      this.logger.debug('Indexer is paused, skipping poll');
+      return;
+    }
+
     this.isRunning = true;
 
     try {
@@ -342,6 +356,10 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log(`Polling events from ledger ${adjustedStartLedger} to ${latestLedger}`);
 
+      // Start batch processing timer
+      const batchStartTime = Date.now();
+      const batchLedgerCount = latestLedger - adjustedStartLedger + 1;
+
       // Fetch events with retry logic
       const events = await this.fetchEventsWithRetry(adjustedStartLedger, latestLedger);
 
@@ -349,6 +367,10 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
         this.logger.debug('No events found in ledger range');
         // Still update cursor to show progress
         await this.ledgerTracker.updateCursor(latestLedger);
+
+        // Record batch processing metrics
+        const batchDuration = (Date.now() - batchStartTime) / 1000;
+        this.metricsService.recordBatchProcessingDuration(batchDuration, batchLedgerCount);
         this.metricsService.recordIndexerPoll('success', 0);
         return;
       }
@@ -358,14 +380,33 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       // Process events
       let processedCount = 0;
       let errorCount = 0;
+      const eventProcessingTimes: number[] = [];
 
       for (const event of events) {
+        const eventStartTime = Date.now();
         try {
           const success = await this.processEvent(event);
-          if (success) processedCount++;
+          const eventDuration = (Date.now() - eventStartTime) / 1000;
+
+          // Record individual event processing metrics
+          const parsedEvent = await this.abiParserService.parseEventWithAbi(event);
+          const eventType = parsedEvent?.eventType || 'unknown';
+          this.metricsService.recordEventProcessingDuration(eventDuration, eventType, success);
+
+          if (success) {
+            processedCount++;
+          }
+
+          eventProcessingTimes.push(eventDuration);
         } catch (error) {
           errorCount++;
           this.logger.error(`Failed to process event ${event.id}: ${error.message}`);
+
+          // Record failed event metrics
+          const eventDuration = (Date.now() - eventStartTime) / 1000;
+          const parsedEvent = await this.abiParserService.parseEventWithAbi(event);
+          const eventType = parsedEvent?.eventType || 'unknown';
+          this.metricsService.recordEventProcessingDuration(eventDuration, eventType, false);
 
           // Continue processing other events even if one fails
           // But log the error for monitoring
@@ -379,14 +420,38 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       // Update cursor to latest processed ledger with hash
       await this.ledgerTracker.updateCursor(latestLedger, latestLedgerInfo.hash);
 
+      // Update indexer state
+      await this.indexerStateService.updateProcessingState(
+        latestLedger,
+        latestLedgerInfo.hash,
+        processedCount,
+        errorCount
+      );
+
       // Log progress
       await this.ledgerTracker.logProgress(latestLedger, latestLedger, processedCount);
 
-      this.logger.log(`Processed ${processedCount}/${events.length} events (${errorCount} errors)`);
+      // Record comprehensive batch metrics
+      const batchDuration = (Date.now() - batchStartTime) / 1000;
+      this.metricsService.recordBatchProcessingDuration(batchDuration, batchLedgerCount);
+      this.metricsService.recordBatchResults(events.length, processedCount, errorCount, 0, batchDuration);
+      this.metricsService.recordLedgerProcessingDuration(batchDuration, batchLedgerCount);
+
+      // Calculate and update processing rates
+      const eventsPerSecond = events.length / batchDuration;
+      this.metricsService.updateProcessingRate(eventsPerSecond);
+
+      // Update lag metrics
+      this.metricsService.updateIndexerLag(latestLedger, latestLedgerInfo.sequence);
+
+      // Record poll status
       this.metricsService.recordIndexerPoll(errorCount > 0 ? 'partial' : 'success', events.length);
+
+      this.logger.log(`Processed ${processedCount}/${events.length} events (${errorCount} errors) in ${batchDuration.toFixed(2)}s`);
     } catch (error) {
       this.logger.error(`Error in poll cycle: ${error.message}`, error.stack);
       await this.ledgerTracker.logError('Poll cycle failed', { error: error.message });
+      await this.indexerStateService.recordError(error);
       this.metricsService.recordIndexerPoll('error', 0);
     } finally {
       this.isRunning = false;
@@ -524,8 +589,8 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
-    // Parse event
-    const parsedEvent = this.parseEvent(event);
+    // Parse event using ABI parser
+    const parsedEvent = await this.abiParserService.parseEventWithAbi(event);
     if (!parsedEvent) {
       this.logger.warn(`Failed to parse event ${event.id}`);
       return false;
