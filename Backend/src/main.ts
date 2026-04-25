@@ -1,9 +1,9 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as yaml from 'js-yaml';
 import { AppModule } from './app.module';
+import { ComprehensiveValidationPipe } from './common/pipes/comprehensive-validation.pipe';
 import { PrismaService } from './prisma.service';
 import { AppLogger } from './common/logger/app.logger';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
@@ -14,9 +14,12 @@ async function bootstrap() {
   app.useLogger(logger);
   const configService = app.get(ConfigService);
 
-  // Global validation pipe
+  // Global comprehensive validation pipe with injection protection
   app.useGlobalPipes(
-    new ValidationPipe({
+    new ComprehensiveValidationPipe({
+      scanSqlInjection: true,
+      scanXss: true,
+      autoSanitizeXss: false,
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
