@@ -1756,3 +1756,29 @@ model Session {
   @@index([userId])
   @@map("sessions")
 }
+
+// ─── Security Audit Logging ─────────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  eventType   String   @map("event_type")
+  severity    String
+  userId      String?  @map("user_id")
+  targetId    String?  @map("target_id")
+  description String?
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  metadata    Json?    // Additional structured data
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Indexes for common query patterns
+  @@index([eventType])
+  @@index([severity])
+  @@index([userId])
+  @@index([targetId])
+  @@index([createdAt])
+  @@index([eventType, createdAt])
+  @@index([severity, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}

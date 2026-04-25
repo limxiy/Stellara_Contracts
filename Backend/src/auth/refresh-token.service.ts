@@ -2,6 +2,8 @@ import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomBytes, createHmac } from 'crypto';
 import { PrismaService } from '../../prisma.service';
+import { AuditLogService } from '../../audit/audit-log.service';
+import { SecurityEventType } from '../../audit/enums/security-event-type.enum';
 
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const ACCESS_TTL_MS = 15 * 60 * 1000; // 15 min
@@ -12,7 +14,10 @@ export class RefreshTokenService {
   // In-memory access token store: token -> { userId, expiresAt }
   private readonly accessTokens = new Map<string, { userId: string; expiresAt: number }>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /** Issue a new access + refresh token pair */
   async issueTokens(userId: string): Promise<{ accessToken: string; refreshToken: string }> {
@@ -27,6 +32,13 @@ export class RefreshTokenService {
         token: this.hash(refreshToken),
         expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
       },
+    });
+
+    await this.auditLog.log({
+      eventType: SecurityEventType.TOKEN_ISSUED,
+      userId,
+      description: 'New token pair issued',
+      metadata: { accessTokenPrefix: accessToken.slice(0, 8) },
     });
 
     return { accessToken, refreshToken };
@@ -47,6 +59,12 @@ export class RefreshTokenService {
       data: { revokedAt: new Date() },
     });
 
+    await this.auditLog.log({
+      eventType: SecurityEventType.TOKEN_REFRESHED,
+      userId: record.userId,
+      description: 'Refresh token rotated',
+    });
+
     return this.issueTokens(record.userId);
   }
 
@@ -56,6 +74,13 @@ export class RefreshTokenService {
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+
+    await this.auditLog.log({
+      eventType: SecurityEventType.TOKEN_REVOKED,
+      userId,
+      description: 'All tokens revoked (logout)',
+    });
+
     // Purge in-memory access tokens for user
     for (const [token, data] of this.accessTokens) {
       if (data.userId === userId) this.accessTokens.delete(token);

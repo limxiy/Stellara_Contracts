@@ -2,6 +2,8 @@ import { Injectable, UnauthorizedException, ForbiddenException, Logger } from '@
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma.service';
+import { AuditLogService } from '../../audit/audit-log.service';
+import { SecurityEventType } from '../../audit/enums/security-event-type.enum';
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const MAX_CONCURRENT_SESSIONS = 5;
@@ -10,7 +12,10 @@ const MAX_CONCURRENT_SESSIONS = 5;
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   async createSession(userId: string, ip?: string, userAgent?: string): Promise<string> {
     const activeSessions = await this.prisma.session.count({
@@ -42,6 +47,15 @@ export class SessionService {
       },
     });
 
+    await this.auditLog.log({
+      eventType: SecurityEventType.SESSION_CREATED,
+      userId,
+      description: 'New session created',
+      ipAddress: ip,
+      userAgent,
+      metadata: { concurrentSessions: activeSessions },
+    });
+
     return token;
   }
 
@@ -49,6 +63,11 @@ export class SessionService {
     const session = await this.prisma.session.findUnique({ where: { token } });
 
     if (!session || session.terminatedAt || session.expiresAt < new Date()) {
+      await this.auditLog.log({
+        eventType: SecurityEventType.SESSION_EXPIRED,
+        userId: session?.userId,
+        description: 'Session validation failed',
+      });
       throw new UnauthorizedException('Session invalid or expired');
     }
 
@@ -76,12 +95,25 @@ export class SessionService {
       where: { id: sessionId },
       data: { terminatedAt: new Date() },
     });
+
+    await this.auditLog.log({
+      eventType: SecurityEventType.SESSION_TERMINATED,
+      userId: session.userId,
+      targetId: sessionId,
+      description: 'Session terminated by user',
+    });
   }
 
   async terminateAllSessions(userId: string): Promise<void> {
     await this.prisma.session.updateMany({
       where: { userId, terminatedAt: null },
       data: { terminatedAt: new Date() },
+    });
+
+    await this.auditLog.log({
+      eventType: SecurityEventType.SESSION_TERMINATED,
+      userId,
+      description: 'All sessions terminated',
     });
   }
 
