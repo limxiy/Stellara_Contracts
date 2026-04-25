@@ -187,6 +187,10 @@ class EnvironmentVariables {
 
   @IsString()
   MFA_ENCRYPTION_KEY: string;
+
+  @IsOptional()
+  @IsString()
+  CORS_ALLOWED_ORIGINS?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

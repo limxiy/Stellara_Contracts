@@ -36,6 +36,8 @@ import { StellaraGraphQLModule } from './graphql/graphql.module';
 import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuditModule } from './audit/audit.module';
+import { ValidationModule } from './common/validation.module';
+import { SecurityHeadersModule } from './security-headers/security-headers.module';
 
 // Middleware & Common
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
@@ -91,6 +93,8 @@ import { AppLogger } from './common/logger/app.logger';
     MfaModule,
     AnalyticsModule,
     AuditModule,
+    ValidationModule,
+    SecurityHeadersModule,
   ],
   controllers: [AppController],
   providers: [AppService, AppLogger, ApiVersionMiddleware, TimeoutMiddleware],
