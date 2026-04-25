@@ -76,7 +76,7 @@ export class MilestoneRejectedHandler implements IEventHandler {
     if (project.creatorId) {
       await this.reputationService.recordActivity(
         project.creatorId,
-        'FAILED_TRANSACTION',
+        ActivityType.FAILED_TRANSACTION,
         1.0,
         event.transactionHash,
       );
@@ -95,10 +95,14 @@ import {
   MilestoneApprovedEvent,
   FundsReleasedEvent,
   ProjectStatusEvent,
+  PolicyCreatedEvent,
+  ClaimSubmittedEvent,
+  ClaimPaidEvent,
 } from '../types/event-types';
 import { IEventHandler, IEventHandlerRegistry } from '../interfaces/event-handler.interface';
 import { NotificationService } from '../../notification/services/notification.service';
 import { ReputationService } from '../../reputation/reputation.service';
+import { ActivityType } from '../../reputation/reputation.constants';
 import { validateEventData } from '../utils/event-validation.util';
 import { ProjectMetadataService } from './project-metadata.service';
 import { EventHandlerLoader } from './event-handler-loader';
@@ -210,6 +214,7 @@ export class ProjectCreatedHandler implements IEventHandler {
 export class ContributionMadeHandler implements IEventHandler {
   readonly eventType = 'contrib';
   private readonly logger = new Logger(ContributionMadeHandler.name);
+  private readonly fundingMilestones = [25, 50, 75, 100] as const;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -225,6 +230,57 @@ export class ContributionMadeHandler implements IEventHandler {
       this.logger.error(`Event validation failed: ${error.message}`, event.data);
       return false;
     }
+  }
+
+  private parseAmount(value: string | number | bigint): bigint {
+    if (typeof value === 'bigint') {
+      return value;
+    }
+
+    return BigInt(value);
+  }
+
+  private getCrossedFundingMilestones(previousFunds: bigint, totalRaised: bigint, goal: bigint): number[] {
+    if (goal <= BigInt(0)) {
+      return [];
+    }
+
+    return this.fundingMilestones.filter((milestone) => {
+      const thresholdAmount = (goal * BigInt(milestone)) / BigInt(100);
+      return previousFunds < thresholdAmount && totalRaised >= thresholdAmount;
+    });
+  }
+
+  private async sendBatchNotifications(
+    notifications: Array<{
+      userId: string;
+      type: 'CONTRIBUTION' | 'MILESTONE';
+      title: string;
+      message: string;
+      data?: Record<string, unknown>;
+    }>,
+  ): Promise<void> {
+    const results = await Promise.allSettled(
+      notifications.map((notification) =>
+        this.notificationService.notify(
+          notification.userId,
+          notification.type,
+          notification.title,
+          notification.message,
+          notification.data,
+        ),
+      ),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const failed = notifications[index];
+        const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        this.logger.error(
+          `Failed to send ${failed.type} notification to user ${failed.userId}: ${reason}`,
+        );
+      }
+    });
   }
 
   async handle(event: ParsedContractEvent): Promise<void> {
@@ -254,6 +310,11 @@ export class ContributionMadeHandler implements IEventHandler {
       return;
     }
 
+    const previousFunds = this.parseAmount(project.currentFunds);
+    const contributionAmount = this.parseAmount(data.amount);
+    const totalRaised = this.parseAmount(data.totalRaised);
+    const fundingGoal = this.parseAmount(project.goal);
+
     // Create contribution and update project funds atomically
     await this.prisma.$transaction([
       this.prisma.contribution.upsert({
@@ -263,36 +324,99 @@ export class ContributionMadeHandler implements IEventHandler {
           transactionHash: event.transactionHash,
           investorId: user.id,
           projectId: project.id,
-          amount: BigInt(data.amount),
+          amount: contributionAmount,
           timestamp: event.ledgerClosedAt,
         },
       }),
       this.prisma.project.update({
         where: { id: project.id },
         data: {
-          currentFunds: BigInt(data.totalRaised),
+          currentFunds: totalRaised,
         },
       }),
     ]);
 
-    // Dispatch notification
+    const notifications: Array<{
+      userId: string;
+      type: 'CONTRIBUTION' | 'MILESTONE';
+      title: string;
+      message: string;
+      data?: Record<string, unknown>;
+    }> = [
+      {
+        userId: user.id,
+        type: 'CONTRIBUTION',
+        title: 'Contribution Successful!',
+        message: `Your contribution of ${contributionAmount.toString()} to project ${project.title} was successful.`,
+        data: {
+          projectId: project.id,
+          amount: contributionAmount.toString(),
+          contributorId: user.id,
+          contributorWallet: user.walletAddress,
+          recipientRole: 'CONTRIBUTOR',
+        },
+      },
+    ];
+
+    // Creator contribution notifications respect each user's contribution preference.
+    if (project.creatorId && project.creatorId !== user.id) {
+      notifications.push({
+        userId: project.creatorId,
+        type: 'CONTRIBUTION',
+        title: 'New Contribution Received!',
+        message: `Your project ${project.title} received ${contributionAmount.toString()} from ${user.walletAddress}.`,
+        data: {
+          projectId: project.id,
+          amount: contributionAmount.toString(),
+          contributorId: user.id,
+          contributorWallet: user.walletAddress,
+          recipientRole: 'CREATOR',
+        },
+      });
+    }
+
+    const crossedMilestones = this.getCrossedFundingMilestones(previousFunds, totalRaised, fundingGoal);
+    if (crossedMilestones.length > 0) {
+      const contributors = await this.prisma.contribution.findMany({
+        where: { projectId: project.id },
+        select: { investorId: true },
+        distinct: ['investorId'],
+      });
+
+      const milestoneRecipients = new Set<string>(contributors.map((contribution) => contribution.investorId));
+      if (project.creatorId) {
+        milestoneRecipients.add(project.creatorId);
+      }
+
+      for (const milestone of crossedMilestones) {
+        for (const recipientId of milestoneRecipients) {
+          notifications.push({
+            userId: recipientId,
+            type: 'MILESTONE',
+            title: 'Funding Milestone Reached!',
+            message: `Project ${project.title} reached ${milestone}% funded (${totalRaised.toString()} / ${fundingGoal.toString()}).`,
+            data: {
+              projectId: project.id,
+              milestonePercent: milestone,
+              totalRaised: totalRaised.toString(),
+              fundingGoal: fundingGoal.toString(),
+            },
+          });
+        }
+      }
+    }
+
     try {
-      await this.notificationService.notify(
-        user.id,
-        'CONTRIBUTION',
-        'Contribution Successful!',
-        `Your contribution of ${data.amount} to project ${project.title} was successful.`,
-        { projectId: project.id, amount: data.amount }
-      );
+      await this.sendBatchNotifications(notifications);
     } catch (e) {
-      this.logger.error(`Failed to send contribution notification to user ${user.id}: ${e.message}`);
+      this.logger.error(`Failed to send contribution notifications for event ${event.eventId}: ${e.message}`);
     }
 
     // Record reputation activity
     try {
       await this.reputationService.recordActivity(
         user.id,
-        'SUCCESSFUL_TRANSACTION',
+        ActivityType.SUCCESSFUL_TRANSACTION,
         Number(data.amount),
         event.transactionHash,
       );
@@ -448,7 +572,7 @@ export class MilestoneApprovedHandler implements IEventHandler {
     if (project.creatorId) {
       await this.reputationService.recordActivity(
         project.creatorId,
-        'SUCCESSFUL_TRANSACTION',
+        ActivityType.SUCCESSFUL_TRANSACTION,
         1.0,
         event.transactionHash,
       );
@@ -552,7 +676,7 @@ export class ProjectCompletedHandler implements IEventHandler {
     if (project.creatorId) {
       await this.reputationService.recordActivity(
         project.creatorId,
-        'SUCCESSFUL_TRANSACTION',
+        ActivityType.SUCCESSFUL_TRANSACTION,
         Number(project.goal),
         event.transactionHash,
       );
@@ -604,7 +728,7 @@ export class ProjectFailedHandler implements IEventHandler {
     if (project.creatorId) {
       await this.reputationService.recordActivity(
         project.creatorId,
-        'FAILED_TRANSACTION',
+        ActivityType.FAILED_TRANSACTION,
         Number(project.goal),
         event.transactionHash,
       );

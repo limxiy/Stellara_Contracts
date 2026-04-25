@@ -112,13 +112,132 @@ describe('EventHandlerService', () => {
       });
 
       mockPrisma.user.upsert.mockResolvedValue({ id: 'user-2' });
-      mockPrisma.project.findUnique.mockResolvedValue({ id: 'proj-1', title: 'Test Project' });
+      mockPrisma.project.findUnique.mockResolvedValue({
+        id: 'proj-1',
+        title: 'Test Project',
+        creatorId: 'creator-1',
+        goal: BigInt(10000),
+        currentFunds: BigInt(0),
+      });
 
       const result = await service.processEvent(event);
 
       expect(result).toBe(true);
       expect(prisma.$transaction).toHaveBeenCalled();
       expect(notificationService.notify).toHaveBeenCalled();
+    });
+
+    it('should notify both contributor and project creator on contribution', async () => {
+      const event = createMockParsedEvent({
+        eventType: 'contrib',
+        data: {
+          ...mockContributionMadeData,
+          contributor: validContributorAddress,
+          amount: '100',
+          totalRaised: '100',
+        },
+      });
+
+      mockPrisma.user.upsert.mockResolvedValue({
+        id: 'user-2',
+        walletAddress: validContributorAddress,
+      });
+      mockPrisma.project.findUnique.mockResolvedValue({
+        id: 'proj-1',
+        title: 'Test Project',
+        creatorId: 'creator-1',
+        goal: BigInt(1000),
+        currentFunds: BigInt(0),
+      });
+
+      const result = await service.processEvent(event);
+
+      expect(result).toBe(true);
+      expect(notificationService.notify).toHaveBeenCalledWith(
+        'user-2',
+        'CONTRIBUTION',
+        'Contribution Successful!',
+        expect.stringContaining('Your contribution of 100 to project Test Project was successful.'),
+        expect.objectContaining({
+          projectId: 'proj-1',
+          amount: '100',
+          recipientRole: 'CONTRIBUTOR',
+          contributorId: 'user-2',
+        }),
+      );
+      expect(notificationService.notify).toHaveBeenCalledWith(
+        'creator-1',
+        'CONTRIBUTION',
+        'New Contribution Received!',
+        expect.stringContaining(`Your project Test Project received 100 from ${validContributorAddress}.`),
+        expect.objectContaining({
+          projectId: 'proj-1',
+          amount: '100',
+          recipientRole: 'CREATOR',
+          contributorId: 'user-2',
+          contributorWallet: validContributorAddress,
+        }),
+      );
+    });
+
+    it('should send milestone notifications in batch when funding thresholds are crossed', async () => {
+      const event = createMockParsedEvent({
+        eventType: 'contrib',
+        data: {
+          ...mockContributionMadeData,
+          contributor: validContributorAddress,
+          amount: '550',
+          totalRaised: '750',
+        },
+      });
+
+      mockPrisma.user.upsert.mockResolvedValue({
+        id: 'user-2',
+        walletAddress: validContributorAddress,
+      });
+      mockPrisma.project.findUnique.mockResolvedValue({
+        id: 'proj-1',
+        title: 'Test Project',
+        creatorId: 'creator-1',
+        goal: BigInt(1000),
+        currentFunds: BigInt(200),
+      });
+      mockPrisma.contribution.findMany.mockResolvedValue([
+        { investorId: 'user-2' },
+        { investorId: 'investor-1' },
+      ]);
+
+      const result = await service.processEvent(event);
+
+      expect(result).toBe(true);
+      expect(prisma.contribution.findMany).toHaveBeenCalledWith({
+        where: { projectId: 'proj-1' },
+        select: { investorId: true },
+        distinct: ['investorId'],
+      });
+      expect(notificationService.notify).toHaveBeenCalledWith(
+        'creator-1',
+        'MILESTONE',
+        'Funding Milestone Reached!',
+        expect.stringContaining('Project Test Project reached 25% funded (750 / 1000).'),
+        expect.objectContaining({
+          projectId: 'proj-1',
+          milestonePercent: 25,
+          totalRaised: '750',
+          fundingGoal: '1000',
+        }),
+      );
+      expect(notificationService.notify).toHaveBeenCalledWith(
+        'investor-1',
+        'MILESTONE',
+        'Funding Milestone Reached!',
+        expect.stringContaining('Project Test Project reached 75% funded (750 / 1000).'),
+        expect.objectContaining({
+          projectId: 'proj-1',
+          milestonePercent: 75,
+        }),
+      );
+      expect(notificationService.notify).toHaveBeenCalledTimes(11);
     });
 
     it('should route MILESTONE_APPROVED and update reputation', async () => {
