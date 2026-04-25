@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as yaml from 'js-yaml';
 import { AppModule } from './app.module';
 import { ComprehensiveValidationPipe } from './common/pipes/comprehensive-validation.pipe';
+import { buildCorsConfig } from './security-headers/cors.config';
 import { PrismaService } from './prisma.service';
 import { AppLogger } from './common/logger/app.logger';
 import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
@@ -67,8 +68,8 @@ async function bootstrap() {
     res.send(yaml.dump(document));
   });
 
-  // CORS
-  app.enableCors();
+  // Hardened CORS configuration
+  app.enableCors(buildCorsConfig(configService));
 
   // Database connection validation
   const prismaService = app.get(PrismaService);
