@@ -9,6 +9,7 @@ members = [
 
     "contracts/tcr",
     "contracts/cross-chain-router",
+    "contracts/amm",
     "integration-tests",
     "shared",
 ]
